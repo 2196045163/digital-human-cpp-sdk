@@ -1,0 +1,14 @@
+# Prerequisites
+*.d
+*.test
+*.install
+*.o
+*.obj
+build/
+out/
+.vscode/
+.DS_Store
+*.lib
+*.a
+*.so
+*.dll
