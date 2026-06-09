@@ -12,3 +12,13 @@ out/
 *.a
 *.so
 *.dll
+
+# 测试运行时生成的临时文件
+test_loadfromfile_*
+test_space*
+
+# 模型文件（太大，不适合 git）
+models/*.dat
+
+# 生成的输出图
+dlib_result.jpg
