@@ -298,6 +298,7 @@ namespace {
 
         return im_info;
     }
+    
     std::string ImageLoader::StatusToString(ImageLoadStatus status) {
         switch (status) {
             case ImageLoadStatus::kOk:                  return "Ok";

@@ -41,4 +41,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/image_loader_test.cpp")
     target_link_libraries(image_loader_test PRIVATE digital_human_core)
 endif()
 
-message(STATUS "Configured example targets: demo_app, opencv_test, ncnn_test, image_loader_test")
+# 7. 构建 FaceDetector 测试程序（验证人脸检测与关键点）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/face_detector_test.cpp")
+    add_executable(face_detector_test face_detector_test.cpp)
+    target_link_libraries(face_detector_test PRIVATE digital_human_core)
+endif()
+
+message(STATUS "Configured example targets: demo_app, opencv_test, ncnn_test, image_loader_test, face_detector_test")
