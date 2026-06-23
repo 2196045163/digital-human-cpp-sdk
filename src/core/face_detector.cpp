@@ -143,7 +143,7 @@ namespace core {
             }
             // 5. dlib::cv_image<dlib::bgr_pixel> 包装
             // 就是把 cv::Mat 包一层，让 dlib 能直接读，不拷贝像素数据
-            // dlib_img 不持有数据，process_img 被销毁后 dlib_img 就悬空了
+            // dlib_img 不持有数据，不然process_img 被销毁后 dlib_img 就悬空了
             dlib::cv_image<dlib::bgr_pixel> dlib_img(process_img);
 
             // 6. detector(dlib_img, detector_upsample_times) 检测并返回他检测到底人脸框

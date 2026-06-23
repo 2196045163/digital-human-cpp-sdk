@@ -8,3 +8,15 @@ add_executable(face_detector_unit_test face_detector_unit_test.cpp)
 target_link_libraries(face_detector_unit_test PRIVATE digital_human_core)
 add_test(NAME face_detector_unit_test COMMAND face_detector_unit_test
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# 人脸对齐模块单元测试
+add_executable(face_aligner_unit_test face_aligner_unit_test.cpp)
+target_link_libraries(face_aligner_unit_test PRIVATE digital_human_core)
+add_test(NAME face_aligner_unit_test COMMAND face_aligner_unit_test
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# 人脸对齐图想的预处理模块单元测试
+add_executable(image_preprocessor_unit_test image_preprocessor_unit_test.cpp)
+target_link_libraries(image_preprocessor_unit_test PRIVATE digital_human_core)
+add_test(NAME image_preprocessor_unit_test COMMAND image_preprocessor_unit_test
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
