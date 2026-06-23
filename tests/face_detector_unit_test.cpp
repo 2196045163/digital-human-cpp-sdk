@@ -261,6 +261,57 @@ int main() {
     }
 
     // ------------------------------------------------------------------
+    // 测试14: Detect 多人脸
+    // ------------------------------------------------------------------
+    std::cout << "[14] Detect multi faces ...\n";
+
+    if (std::filesystem::exists("multi_face.jpg")) {
+        cv::Mat multi_img = cv::imread("multi_face.jpg");
+        FaceDetectionResult r14 = detector.Detect(multi_img);
+        EXPECT_TRUE(r14.success, "Detect multi: success == true");
+        EXPECT_EQ(r14.status, FaceDetectStatus::kOk, "Detect multi: kOk");
+        EXPECT_TRUE(r14.faces.size() >= 2, "Detect multi: faces >= 2");
+    } else {
+        std::cout << "  (multi_face.jpg not found, skipping)\n";
+    }
+
+    // ------------------------------------------------------------------
+    // 测试15: DetectAndLandmark 多人脸
+    // ------------------------------------------------------------------
+    std::cout << "[15] DetectAndLandmark multi faces ...\n";
+
+    if (std::filesystem::exists("multi_face.jpg") && detector.IsLandmarkModelLoaded()) {
+        cv::Mat multi_img = cv::imread("multi_face.jpg");
+        FaceAnalyzeResult r15 = detector.DetectAndLandmark(multi_img);
+        EXPECT_TRUE(r15.success, "D&L multi: success == true");
+        EXPECT_EQ(r15.status, FaceDetectStatus::kOk, "D&L multi: kOk");
+        EXPECT_TRUE(r15.detection.faces.size() >= 2, "D&L multi: faces >= 2");
+        EXPECT_EQ(r15.landmarks.size(), r15.detection.faces.size(),
+                  "D&L multi: landmarks count == faces count");
+        // 检查每张脸的关键点状态
+        for (size_t i = 0; i < r15.landmarks.size(); ++i) {
+            std::cout << "  Face " << i
+                      << ": rect=" << r15.detection.faces[i].rect
+                      << " lm_status=" << FaceDetector::StatusToString(r15.landmarks[i].status)
+                      << " lm_count=" << r15.landmarks[i].landmarks.size()
+                      << "\n";
+            // 脸太小可能返回 kFaceTooSmall，不算失败
+            if (r15.landmarks[i].status == FaceDetectStatus::kOk) {
+                EXPECT_EQ(r15.landmarks[i].landmarks.size(), size_t(68),
+                          "D&L multi: face landmarks == 68");
+                EXPECT_EQ(r15.landmarks[i].mouth_landmarks.size(), size_t(20),
+                          "D&L multi: mouth == 20");
+            } else {
+                std::cout << "    (skipped: "
+                          << FaceDetector::StatusToString(r15.landmarks[i].status)
+                          << ")\n";
+            }
+        }
+    } else {
+        std::cout << "  (multi_face.jpg or model not available, skipping)\n";
+    }
+
+    // ------------------------------------------------------------------
     // 结果
     // ------------------------------------------------------------------
     std::cout << "----------------------------------------\n";
