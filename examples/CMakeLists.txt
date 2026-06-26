@@ -47,18 +47,24 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/face_detector_test.cpp")
     target_link_libraries(face_detector_test PRIVATE digital_human_core)
 endif()
 
-# 8. 构建 FaceAligner 测试程序（验证人脸检测与关键点）
+# 8. 构建 FaceAligner 测试程序（验证人脸对齐）
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/face_aligner_test.cpp")
     add_executable(face_aligner_test face_aligner_test.cpp)
     target_link_libraries(face_aligner_test PRIVATE digital_human_core)
 endif()
 
-# 9. 构建 ImagePreprocessor 测试程序（验证人脸检测与关键点）
+# 9. 构建 ImagePreprocessor 测试程序（验证按模型要求的像素点预处理）
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/image_preprocessor_test.cpp")
     add_executable(image_preprocessor_test image_preprocessor_test.cpp)
     target_link_libraries(image_preprocessor_test PRIVATE digital_human_core)
 endif()
 
+# 10. 构建 FacemaskGenerator 测试程序（验证人脸掩码生成）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/face_mask_generator_test.cpp")
+    add_executable(face_mask_generator_test face_mask_generator_test.cpp)
+    target_link_libraries(face_mask_generator_test PRIVATE digital_human_core)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, 
         ncnn_test, image_loader_test, face_detector_test, face_aligner_test,
-        image_preprocessor_test")
+        image_preprocessor_test, face_mask_generator_test")
