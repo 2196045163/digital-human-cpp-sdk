@@ -65,6 +65,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/face_mask_generator_test.cpp")
     target_link_libraries(face_mask_generator_test PRIVATE digital_human_core)
 endif()
 
+# 11. 构建 FaceBlender 测试程序（验证人脸融合模块）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/face_blender_test.cpp")
+    add_executable(face_blender_test face_blender_test.cpp)
+    target_link_libraries(face_blender_test PRIVATE digital_human_core)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, 
         ncnn_test, image_loader_test, face_detector_test, face_aligner_test,
-        image_preprocessor_test, face_mask_generator_test")
+        image_preprocessor_test, face_mask_generator_test face_blender_test")
