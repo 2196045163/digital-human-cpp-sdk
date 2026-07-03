@@ -6,6 +6,7 @@
 
 #include <opencv2/imgproc.hpp> //minMaxLoc、GaussianBlur、dilate、fillConvexPoly 
 
+#include "core/face_landmark_constants.h"
 #include "core/face_mask_generator.h"
 
 namespace digital_human {
@@ -56,20 +57,23 @@ namespace core {
                 
                 return fm_res;
             }
-            // 2.检查 landmarks.size() == 68，否则返回 kInvalidLandmarkCount
-            // 原图版用 != 68 是因为 FaceDetector 输出固定 68 个——多一个少一个都不正常
-            if (landmarks.size() != 68) {
+            // 2.检查 landmarks.size() == kFaceLandmarkCount，否则返回 kInvalidLandmarkCount
+            // 原图版用 != kFaceLandmarkCount 是因为 FaceDetector 输出固定关键点数量——多一个少一个都不正常
+            if (landmarks.size() != kFaceLandmarkCount) {
                 fm_res.success = false;
                 fm_res.status = FaceMaskStatus::kInvalidLandmarkCount;
-                fm_res.error_message = "The number of landmark count is not 68, which is " + std::to_string(landmarks.size());
+                fm_res.error_message = "Expected " + std::to_string(kFaceLandmarkCount)
+                    + " landmarks, got " + std::to_string(landmarks.size());
                 
                 return fm_res;
             }
             // 3.根据 options.mouth_region 取嘴部点（48~59 或 48~67）
             // 后续填白、膨胀、羽化都基于这组点。外轮廓够基础可视化用，完整嘴部（含内轮廓）画出的 mask 在张嘴时更稳定
             std::vector<cv::Point> mouth_pts;
-            int pts_start = 48;
-            int pts_end = (options.mouth_region == MouthRegionMode::kFullMouth) ? 67 : 59;  // 是取内外嘴唇还是外嘴唇
+            int pts_start = kMouthLandmarkStart;
+            int pts_end = (options.mouth_region == MouthRegionMode::kFullMouth)
+                ? kMouthFullLandmarkEnd
+                : kMouthOuterLandmarkEnd;  // 是取内外嘴唇还是外嘴唇
             for (int i = pts_start; i <= pts_end; i++) {
                 mouth_pts.push_back(landmarks[i]);
             }
@@ -155,12 +159,13 @@ namespace core {
                 return fm_res;
             }
 
-            // 2.检查 aligned_landmarks.size() >= 68
-            // 万一 FaceAligner 后续输出了多于 68 个点（比如加了额外参考点），本模块仍然能用前面的 68 个，不报错
-            if (aligned_landmarks.size() < 68) {
+            // 2.检查 aligned_landmarks.size() >= kFaceLandmarkCount
+            // 万一 FaceAligner 后续输出了多于标准关键点数量的点，本模块仍然能用前面的标准关键点，不报错
+            if (aligned_landmarks.size() < kFaceLandmarkCount) {
                 fm_res.success = false;
                 fm_res.status = FaceMaskStatus::kInvalidLandmarkCount;
-                fm_res.error_message = "The number of landmark count less 68, which is " + std::to_string(aligned_landmarks.size());
+                fm_res.error_message = "Expected at least " + std::to_string(kFaceLandmarkCount)
+                    + " landmarks, got " + std::to_string(aligned_landmarks.size());
                 
                 return fm_res;
             }
@@ -175,8 +180,10 @@ namespace core {
 
             // 3.取嘴部点（48~67，默认 kFullMouth），用 cv::Point2f
             std::vector<cv::Point2f> mouth_pts;
-            int pts_start = 48;
-            int pts_end = (options.mouth_region == MouthRegionMode::kFullMouth) ? 67 : 59;  // 是取内外嘴唇还是外嘴唇
+            int pts_start = kMouthLandmarkStart;
+            int pts_end = (options.mouth_region == MouthRegionMode::kFullMouth)
+                ? kMouthFullLandmarkEnd
+                : kMouthOuterLandmarkEnd;  // 是取内外嘴唇还是外嘴唇
             for (int i = pts_start; i <= pts_end; i++) {
                 mouth_pts.push_back(aligned_landmarks[i]);
             }

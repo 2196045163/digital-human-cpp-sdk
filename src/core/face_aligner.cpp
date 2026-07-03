@@ -5,6 +5,7 @@
 #include <chrono>
 
 #include "core/face_aligner.h"
+#include "core/face_landmark_constants.h"
 
 namespace digital_human {
 namespace core {
@@ -55,11 +56,12 @@ namespace core {
                 return fa_res;
             }
 
-            // 3. 检查 landmarks.size() == 68
-            if (landmarks.size() != 68) {
+            // 3. 检查 landmarks.size() == kFaceLandmarkCount
+            if (landmarks.size() != kFaceLandmarkCount) {
                 fa_res.success = false;
                 fa_res.status = ImagePreprocessStatus::kInvalidLandmarkCount;
-                fa_res.error_message = "The landmarks size is not 68: " + std::to_string(landmarks.size());
+                fa_res.error_message = "Expected " + std::to_string(kFaceLandmarkCount)
+                    + " landmarks, got " + std::to_string(landmarks.size());
 
                 return fa_res;
             }

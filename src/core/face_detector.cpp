@@ -11,6 +11,7 @@
 #include <dlib/image_processing/frontal_face_detector.h>
 
 #include "core/face_detector.h"
+#include "core/face_landmark_constants.h"
 
 namespace digital_human {
 namespace core {
@@ -286,14 +287,15 @@ namespace core {
 
                 return flandmark_res;
             }
-            // 9. num_parts() != 68 → kLandmarkFailed
+            // 9. num_parts() != kFaceLandmarkCount → kLandmarkFailed
             // shape 是预测结果，num_parts() 告诉你它预测出来几个关键点。
             // 68 点模型正常情况下应该返回 68 个。
             // 如果不是 68，说明预测失败了（比如人脸框位置不对、模型不匹配）
-            if (shape.num_parts() != 68) {
+            if (shape.num_parts() != kFaceLandmarkCount) {
                 flandmark_res.success = false;
                 flandmark_res.status = FaceDetectStatus::kLandmarkFailed;
-                flandmark_res.error_message = "Expected 68 landmarks, got " + std::to_string(shape.num_parts());
+                flandmark_res.error_message = "Expected " + std::to_string(kFaceLandmarkCount)
+                    + " landmarks, got " + std::to_string(shape.num_parts());
                 
                 return flandmark_res;
             }
@@ -301,8 +303,8 @@ namespace core {
             // 10. 转成 std::vector<cv::Point>
             // 把 dlib 的 68 个点逐个转成 cv::Point，存到 vector 里。后面画图、提嘴部点都只认 cv::Point，不认 dlib 格式
             std::vector<cv::Point> landmarks;
-            landmarks.reserve(68);
-            for (int i = 0; i < 68; ++i) {
+            landmarks.reserve(kFaceLandmarkCount);
+            for (std::size_t i = 0; i < kFaceLandmarkCount; ++i) {
                 landmarks.push_back(cv::Point(shape.part(i).x(), shape.part(i).y()));
             }
 
@@ -419,11 +421,13 @@ namespace core {
     // 从 68 点里取 48~67 共 20 个点 即嘴部的关键点
     std::vector<cv::Point> FaceDetector::ExtractMouthLandmarks(
         const std::vector<cv::Point>& landmarks) {
-        if (landmarks.size() < 68) {
+        if (landmarks.size() < kFaceLandmarkCount) {
             return {};// 不够68点，返回空
         }
 
-        return std::vector<cv::Point>(landmarks.begin() + 48, landmarks.begin() + 68);
+        return std::vector<cv::Point>(
+            landmarks.begin() + kMouthLandmarkStart,
+            landmarks.begin() + kMouthFullLandmarkEndExclusive);
     }
 
     bool FaceDetector::IsValidFaceRect(const cv::Rect& rect, const cv::Size& image_size) {

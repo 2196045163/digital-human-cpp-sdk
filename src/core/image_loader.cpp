@@ -1,6 +1,5 @@
 
 #include <memory>
-#include <iostream>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -106,6 +105,7 @@ namespace {
             // fallback：cv::imread（主路径失败时尝试）
             int read_mode = ToOpenCvFlag(options.read_mode);
             cv::Mat img_mat;
+            std::string decode_error;
 
             // === 主路径：ifstream + imdecode ===
             {
@@ -119,7 +119,7 @@ namespace {
                     try {
                         img_mat = cv::imdecode(buffer, read_mode);
                     } catch (const cv::Exception& e) {
-                        std::cerr << "imdecode error: " << e.what() << "\n";
+                        decode_error = std::string("imdecode failed: ") + e.what();
                     }
                 }
             }
@@ -129,7 +129,10 @@ namespace {
                 try {
                     img_mat = cv::imread(file_path, read_mode);
                 } catch (const cv::Exception& e) {
-                    std::cerr << "imread fallback failed: " << e.what() << "\n";
+                    if (!decode_error.empty()) {
+                        decode_error += "; ";
+                    }
+                    decode_error += std::string("imread fallback failed: ") + e.what();
                 }
             }
 
@@ -147,6 +150,9 @@ namespace {
             load_res.success = false;
             load_res.status = ImageLoadStatus::kDecodeFailed;
             load_res.error_message = "Failed to decode image: " + file_path;
+            if (!decode_error.empty()) {
+                load_res.error_message += "; " + decode_error;
+            }
             return load_res;
         }
 
@@ -166,15 +172,13 @@ namespace {
             try {
                 img_mat = cv::imdecode(buffer, read_mode);
             } catch (const cv::Exception& e) {
-                std::cerr << "cv::imdecode error: " << e.what();
                 load_res.success = false;
                 load_res.status = ImageLoadStatus::kOpenCvError;
-                load_res.error_message = "Decoding image is failed in the memory!";
+                load_res.error_message = std::string("Decoding image failed in memory: ") + e.what();
                 return load_res;
             }
 
             if (img_mat.empty()) {
-                std::cout << "The img_mat is empty, openCv decode failed!\n";
                 load_res.success = false;
                 load_res.status = ImageLoadStatus::kDecodeFailed;
                 load_res.error_message = "Image is empty in the memory!";
