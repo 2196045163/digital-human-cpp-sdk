@@ -38,3 +38,9 @@ add_executable(audio_loader_unit_test audio/audio_loader_unit_test.cpp)
 target_link_libraries(audio_loader_unit_test PRIVATE digital_human_core)
 add_test(NAME audio_loader_unit_test COMMAND audio_loader_unit_test
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# 音频分帧模块单元测试
+add_executable(audio_framer_unit_test audio/audio_framer_unit_test.cpp)
+target_link_libraries(audio_framer_unit_test PRIVATE digital_human_core)
+add_test(NAME audio_framer_unit_test COMMAND audio_framer_unit_test
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

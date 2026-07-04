@@ -70,6 +70,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/audio/audio_loader_test.cpp")
     target_link_libraries(audio_loader_test PRIVATE digital_human_core)
 endif()
 
+# 13. 构建 AudioFramer 测试程序（验证音频分帧模块）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/audio/audio_framer_test.cpp")
+    add_executable(audio_framer_test audio/audio_framer_test.cpp)
+    target_link_libraries(audio_framer_test PRIVATE digital_human_core)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, "
         "ncnn_test, ffmpeg_audio_test, dlib_test, image_loader_test, "
         "face_detector_test, face_aligner_test, image_preprocessor_test, "
