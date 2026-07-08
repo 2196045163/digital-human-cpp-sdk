@@ -82,8 +82,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/audio/audio_mel_feature_extract_test.cpp"
     target_link_libraries(audio_mel_feature_extract_test PRIVATE digital_human_core)
 endif()
 
+# 15. 构建 AudioPreprocessor 测试程序（验证音频预处理模块）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/audio/audio_preprocessor_test.cpp")
+    add_executable(audio_preprocessor_test audio/audio_preprocessor_test.cpp)
+    target_link_libraries(audio_preprocessor_test PRIVATE digital_human_core)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, "
         "ncnn_test, ffmpeg_audio_test, dlib_test, image_loader_test, "
         "face_detector_test, face_aligner_test, image_preprocessor_test, "
         "face_mask_generator_test, face_blender_test, audio_loader_test, "
-        "audio_framer_test, audio_mel_feature_extract_test")
+        "audio_framer_test, audio_mel_feature_extract_test, "
+        "audio_preprocessor_test")

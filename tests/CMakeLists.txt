@@ -50,3 +50,9 @@ add_executable(audio_mel_feature_extract_unit_test audio/audio_mel_feature_extra
 target_link_libraries(audio_mel_feature_extract_unit_test PRIVATE digital_human_core)
 add_test(NAME audio_mel_feature_extract_unit_test COMMAND audio_mel_feature_extract_unit_test
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# 音频预处理模块单元测试
+add_executable(audio_preprocessor_unit_test audio/audio_preprocessor_unit_test.cpp)
+target_link_libraries(audio_preprocessor_unit_test PRIVATE digital_human_core)
+add_test(NAME audio_preprocessor_unit_test COMMAND audio_preprocessor_unit_test
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
