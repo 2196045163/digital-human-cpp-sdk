@@ -88,9 +88,22 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/audio/audio_preprocessor_test.cpp")
     target_link_libraries(audio_preprocessor_test PRIVATE digital_human_core)
 endif()
 
+# 16. 构建 AudioStreamBuffer 测试程序（验证环形缓冲区）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/audio/audio_stream_buffer_test.cpp")
+    add_executable(audio_stream_buffer_test audio/audio_stream_buffer_test.cpp)
+    target_link_libraries(audio_stream_buffer_test PRIVATE digital_human_core)
+endif()
+
+# 17. 构建 AudioStreamPipeline 测试程序（验证 Loader→Buffer→Preprocessor 链路）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/audio/audio_stream_pipeline_test.cpp")
+    add_executable(audio_stream_pipeline_test audio/audio_stream_pipeline_test.cpp)
+    target_link_libraries(audio_stream_pipeline_test PRIVATE digital_human_core)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, "
         "ncnn_test, ffmpeg_audio_test, dlib_test, image_loader_test, "
         "face_detector_test, face_aligner_test, image_preprocessor_test, "
         "face_mask_generator_test, face_blender_test, audio_loader_test, "
         "audio_framer_test, audio_mel_feature_extract_test, "
-        "audio_preprocessor_test")
+        "audio_preprocessor_test, audio_stream_buffer_test, "
+        "audio_stream_pipeline_test")
