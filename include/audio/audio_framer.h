@@ -135,6 +135,18 @@ public:
         const std::vector<float>& pcm
     ) const;
 
+    /// @brief 流式分帧：每次传入一块 PCM chunk，攒够 frame_size 时自动切帧并加窗返回
+    /// @param chunk 输入 PCM 数据块（来自 AudioStreamBuffer::PullSamples 等）
+    /// @return 本次新产生的音频帧（可能 0~多帧），尾部不足一帧的数据留在内部 buffer
+    /// @note  内部维护 pcm_buffer，跨调用保留状态。用完后调 FlushFrames 取尾部残留帧
+    std::vector<AudioFrame> ProcessFrame(const std::vector<float>& chunk);
+
+    /// @brief 取流式残留帧：处理完所有 chunk 后，内部 buffer 剩余不足一帧时按 tail_policy 处理
+    std::vector<AudioFrame> FlushFrames();
+
+    /// @brief 重置流式状态：清空内部 pcm_buffer
+    void ResetStreaming();
+
     /// @brief 从 PCM 中切取一帧（不含加窗），供调试和测试
     /// @param pcm        补零后的 PCM 数组
     /// @param start_index 本帧起始采样索引

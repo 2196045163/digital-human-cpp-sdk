@@ -159,9 +159,23 @@ public:
     ) const;
 
     /// @brief 便捷接口：单帧提取 → 直接返回 float vector（供调试/验证）
+    /// @note 失败时返回空 vector；正式链路需要错误原因时请使用 Extract() 获取 MelFeatureResult
     std::vector<float> ExtractVector(
         const std::vector<float>& frame
     ) const;
+
+    /// @brief 流式 Mel 攒帧：每来一帧 [1, n_mels] 就往内部 buffer 追加
+    /// @param mel_frame 单帧 Mel 特征 [n_mels]
+    /// @note  内部维护 mel_buffer。可配合 AudioFramer::ProcessFrame 使用
+    void PushMelFrame(const std::vector<float>& mel_frame);
+
+    /// @brief 把内部攒的 mel_buffer 转为 cv::Mat [T, n_mels]，然后清空 buffer
+    cv::Mat FlushMelFrames();
+
+    /// @brief 流式 Wav2Lip chunk：从内部 mel_buffer 切 16 帧 chunk → freq-major 展平
+    /// @return 如果攒够了 chunk_size 帧就返回一个 chunk，否则返回空 vector
+    /// @note  调用前先通过 PushMelFrame 攒帧
+    std::vector<float> TryPopMelChunk(const MelChunkOptions& options = MelChunkOptions());
 
     /// @brief Wav2Lip chunk 切块：将 [T, n_mels] 切成连续 16 帧 chunck → freq-major 展平
     /// @param mel_spectrogram 批量 Mel 频谱矩阵 [num_frames, n_mels]
