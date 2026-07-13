@@ -10,6 +10,7 @@
 #include <thread>      // std::thread
 #include <vector>
 
+#include "audio/audio_framer.h"
 #include "audio/audio_loader.h"
 #include "audio/audio_preprocessor.h"
 #include "audio/audio_stream_buffer.h"
@@ -32,14 +33,16 @@ int main(int argc, char* argv[]) {
               << "  " << load_res.audio.pcm.size() << " samples"
               << "  " << load_res.info.source_duration_sec << " sec\n\n";
 
-    // 2. 准备 buffer 和 preprocessor（buffer 大一点，减少 Block 次数）
+    // 2. 准备 buffer / preprocessor / framer（buffer 大一点，减少 Block 次数）
     AudioStreamBuffer buf(AudioStreamBuffer::FromDuration(16000, 2000.0));
     AudioPreprocessor preproc;
+    AudioFramer framer(AudioFramer::Wav2LipDefault());
     const auto& pcm = load_res.audio.pcm;
     const size_t chunk_size = 320;
     size_t total_push = 0;
     size_t total_pull = 0;
     size_t preproc_count = 0;
+    size_t frame_count = 0;
 
     // 3. 生产者线程：分块 push（Block 策略，满了等消费者）
     std::thread producer([&]() {
@@ -56,7 +59,7 @@ int main(int argc, char* argv[]) {
         buf.Close();
     });
 
-    // 4. 消费者线程：从 buffer pull，逐块喂给 preprocessor
+    // 4. 消费者线程：从 buffer pull → preprocessor → framer 流式分帧
     std::thread consumer([&]() {
         while (true) {
             auto pl = buf.PullSamples(320);
@@ -65,9 +68,19 @@ int main(int argc, char* argv[]) {
                 continue;
             }
             total_pull += pl.pulled_samples;
+
+            // 预处理（分块）
             auto pp_res = preproc.ProcessFrame(pl.pcm);
-            if (pp_res.success) { preproc_count++; }
+            if (!pp_res.success) { continue; }
+            preproc_count++;
+
+            // 流式分帧：把预处理后的 PCM 喂给 framer
+            auto new_frames = framer.ProcessFrame(pp_res.pcm);
+            frame_count += new_frames.size();
         }
+        // 取尾部残留帧
+        auto tail = framer.FlushFrames();
+        frame_count += tail.size();
     });
 
     producer.join();
@@ -75,7 +88,8 @@ int main(int argc, char* argv[]) {
 
     std::cout << "[Producer] pushed: " << total_push << " samples\n";
     std::cout << "[Consumer] pulled: " << total_pull << " samples"
-              << "  preprocessed: " << preproc_count << " frames\n";
+              << "  preprocessed: " << preproc_count << " chunks\n";
+    std::cout << "  frames (streaming): " << frame_count << "\n";
     std::cout << "  pushed == pulled: " << (total_push == total_pull ? "PASS" : "FAIL") << "\n\n";
 
     // golden：pipeline 统计报告

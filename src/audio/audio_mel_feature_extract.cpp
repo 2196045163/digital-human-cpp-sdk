@@ -19,15 +19,24 @@ namespace {
     /// @brief 校验 MelFeatureOptions 合法性
     /// @return kOk 通过；其他值对应首个失败点
     static MelFeatureStatus ValidateOptions(const MelFeatureOptions& opts) {
-        if (opts.sample_rate <= 0)      return MelFeatureStatus::kInvalidSampleRate;
-        if (opts.n_fft <= 0)            return MelFeatureStatus::kInvalidFftSize;
-        if (opts.n_mels <= 0)           return MelFeatureStatus::kInvalidMelCount;
-        if (opts.fmin < 0.0f || opts.fmax <= opts.fmin)
-                                        return MelFeatureStatus::kInvalidFrequencyRange;
-        if (opts.fmax > opts.sample_rate / 2.0f)
-                                        return MelFeatureStatus::kInvalidFrequencyRange;
-        if (opts.max_abs_value <= 0.0f)
-                                        return MelFeatureStatus::kInvalidNormalizeRange;
+        if (opts.sample_rate <= 0) {
+            return MelFeatureStatus::kInvalidSampleRate;
+        }
+        if (opts.n_fft <= 0) {
+            return MelFeatureStatus::kInvalidFftSize;
+        }
+        if (opts.n_mels <= 0) {
+            return MelFeatureStatus::kInvalidMelCount;
+        }
+        if (opts.fmin < 0.0f || opts.fmax <= opts.fmin) {
+            return MelFeatureStatus::kInvalidFrequencyRange;
+        }
+        if (opts.fmax > opts.sample_rate / 2.0f) {
+            return MelFeatureStatus::kInvalidFrequencyRange;
+        }
+        if (opts.max_abs_value <= 0.0f) {
+            return MelFeatureStatus::kInvalidNormalizeRange;
+        }
         
         return MelFeatureStatus::kOk;
     }
@@ -103,6 +112,7 @@ struct MelFeatureExtractor::Impl {
     int n_fft_bins = 0;             // n_fft / 2 + 1，如 800 → 401
     cv::Mat mel_basis;              // 预构建的 Mel 滤波器组 [n_mels, n_fft_bins]
     bool mel_basis_ok = false;      // mel_basis 是否构建成功
+    std::vector<std::vector<float>> mel_buffer;  // 流式 Mel 攒帧缓冲
 };
 
 // ====== 构造/析构/移动 ======
@@ -196,7 +206,9 @@ int MelFeatureExtractor::GetFftBins() const {
 }
 
 float MelFeatureExtractor::GetFrequencyResolutionHz() const {
-    if (pImpl_->options.n_fft <= 0) return 0.0f;
+    if (pImpl_->options.n_fft <= 0) {
+        return 0.0f;
+    }
     return static_cast<float>(pImpl_->options.sample_rate) / pImpl_->options.n_fft;
 }
 
@@ -323,8 +335,13 @@ MelFeatureResult MelFeatureExtractor::ExtractBatch(
 
 std::vector<float> MelFeatureExtractor::ExtractVector(const std::vector<float>& frame) const {
     auto res = Extract(frame);
-    if (!res.success || res.mel.empty()) return {};
     std::vector<float> vec;
+
+    // 这是兼容性的便捷接口；需要失败状态时应直接调用 Extract().
+    if (!res.success || res.mel.empty()) {
+        return vec;
+    }
+
     vec.assign(res.mel.begin<float>(), res.mel.end<float>());
     return vec;
 }
@@ -408,6 +425,62 @@ MelChunkResult MelFeatureExtractor::BuildWav2LipChunks(
     r.n_mels = n_mels;
     r.layout = options.layout;
     return r;
+}
+
+// ====== 流式接口 ======
+
+void MelFeatureExtractor::PushMelFrame(const std::vector<float>& mel_frame) {
+    pImpl_->mel_buffer.push_back(mel_frame);
+}
+
+cv::Mat MelFeatureExtractor::FlushMelFrames() {
+    int rows = static_cast<int>(pImpl_->mel_buffer.size());
+    int cols = pImpl_->options.n_mels;
+    cv::Mat mel_mat(rows, cols, CV_32F);
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            mel_mat.at<float>(r, c) = pImpl_->mel_buffer[r][c];
+        }
+    }
+    pImpl_->mel_buffer.clear();
+    return mel_mat;
+}
+
+std::vector<float> MelFeatureExtractor::TryPopMelChunk(const MelChunkOptions& options) {
+    int chunk_size = options.chunk_size;
+    if (static_cast<int>(pImpl_->mel_buffer.size()) < chunk_size) {
+        return {};  // 不够一个 chunk，返回空
+    }
+
+    // 取前 chunk_size 帧
+    std::vector<std::vector<float>> chunk_frames(
+        pImpl_->mel_buffer.begin(),
+        pImpl_->mel_buffer.begin() + chunk_size);
+
+    // 转为 cv::Mat [chunk_size, n_mels]
+    int n_mels = pImpl_->options.n_mels;
+    cv::Mat chunk_mat(chunk_size, n_mels, CV_32F);
+    for (int r = 0; r < chunk_size; r++) {
+        for (int c = 0; c < n_mels; c++) {
+            chunk_mat.at<float>(r, c) = chunk_frames[r][c];
+        }
+    }
+
+    // 从 buffer 中移除已取帧（根据 hop 滑动）
+    int hop = options.hop > 0 ? options.hop : 1;
+    pImpl_->mel_buffer.erase(
+        pImpl_->mel_buffer.begin(),
+        pImpl_->mel_buffer.begin() + std::min(hop, static_cast<int>(pImpl_->mel_buffer.size())));
+
+    // freq-major 展平
+    std::vector<float> result;
+    result.reserve(chunk_size * n_mels);
+    for (int c = 0; c < n_mels; c++) {
+        for (int r = 0; r < chunk_size; r++) {
+            result.push_back(chunk_mat.at<float>(r, c));
+        }
+    }
+    return result;
 }
 
 }   // namespace audio

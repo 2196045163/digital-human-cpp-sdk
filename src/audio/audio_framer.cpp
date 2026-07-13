@@ -1,5 +1,3 @@
-
-
 #include <cmath>    // std::round, std::cos, M_PI
 #include <memory>
 #include <vector>
@@ -44,7 +42,6 @@ namespace {
         return info;
     }
 
-
 } // 匿名空间
 
     // ====== Impl ======
@@ -53,7 +50,8 @@ namespace {
         int64_t frame_size;             // 一个数据帧的采样点数
         int64_t hop_size;               // 数据帧之间间隔的采样点数
         int64_t overlap_size;           // 数据帧之间重叠的采样点数
-        std::vector<float> window;  // 预计算的窗函数，避免每帧重复算
+        std::vector<float> window;      // 预计算的窗函数，避免每帧重复算
+        std::vector<float> pcm_buffer;  // 流式用的 PCM 缓冲：攒够 frame_size 才切一帧
     };
 
     // ====== 构造/析构/移动 ======
@@ -88,7 +86,6 @@ namespace {
         }
     }
 
-
     /// @brief 从 PCM 中切取一帧（不含加窗），供调试和测试
     std::vector<float> AudioFramer::CreateFrame(const std::vector<float>& pcm,
         size_t start_index, bool pad_tail) const {
@@ -122,7 +119,6 @@ namespace {
         return res;
     }
 
-
     /// @brief 主分帧接口：完整流程（校验→计算→补零→切片→加窗→返回元数据）
     AudioFrameResult AudioFramer::Frame(const std::vector<float>& pcm) const {
         AudioFrameResult af_res;
@@ -155,7 +151,6 @@ namespace {
             }
         }
 
-
         // 2.计算帧数 + 计算尾帧补零个数
         int frame_cnt = ComputeNumFrames(static_cast<int64_t>(pcm.size()), pImpl_->frame_size, 
                                          pImpl_->hop_size, pImpl_->options.tail_policy);
@@ -170,7 +165,6 @@ namespace {
         // 2.2 构造补零后的 PCM
         std::vector<float> padded_pcm = pcm;
         padded_pcm.resize(padded_pcm.size() + static_cast<size_t>(pad_cnt), 0.0f);
-
 
         // 3.循环分帧
         for (int i = 0; i < frame_cnt; i++) {
@@ -199,17 +193,14 @@ namespace {
             af_res.frames.push_back(std::move(af));
         }
 
-
         // 4. 填 AudioFrameInfo
         af_res.info = MakeFrameInfo(*this, pcm, static_cast<int64_t>(padded_pcm.size()),
                                     pad_cnt, frame_cnt);
-
 
         // 5.填窗函数
         if (pImpl_->options.return_window) {
             af_res.window = pImpl_->window;
         }
-
 
         // 6. 返回
         af_res.success = true;
@@ -336,7 +327,9 @@ namespace {
         // 3.三种不同的尾部数据帧方案
         // L < N 时特殊处理：补零策略返回 1 帧（全补零），丢弃策略返回 0
         if (sample_cnt < static_cast<double>(frame_size)) {
-            if (tail_policy == AudioTailPolicy::kDropIncomplete) return 0;
+            if (tail_policy == AudioTailPolicy::kDropIncomplete) {
+                return 0;
+            }
             return 1;  // kCoverLastSample / kStartEveryHop：补零凑一帧
         }
 
@@ -394,6 +387,79 @@ namespace {
 
     const AudioFrameOptions& AudioFramer::GetOptions() const {
         return pImpl_->options;
+    }
+
+    // ====== 流式接口 ======
+
+    std::vector<AudioFrame> AudioFramer::ProcessFrame(const std::vector<float>& chunk) {
+        std::vector<AudioFrame> frames;
+
+        // 把新 chunk 追加到内部缓冲
+        pImpl_->pcm_buffer.insert(pImpl_->pcm_buffer.end(), chunk.begin(), chunk.end());
+
+        // 攒够一帧就切一帧：每次取 frame_size 个，向前移动 hop_size
+        while (pImpl_->pcm_buffer.size() >= static_cast<size_t>(pImpl_->frame_size)) {
+            // 从缓冲头部切一帧（CreateFrame 的第一个参数要求 padded_pcm，但这里只切头部帧，
+            // 实际就是取前 frame_size 个样本）
+            std::vector<float> frame_samples(
+                pImpl_->pcm_buffer.begin(),
+                pImpl_->pcm_buffer.begin() + pImpl_->frame_size);
+
+            ApplyWindow(frame_samples);
+
+            AudioFrame af;
+            af.samples = std::move(frame_samples);
+            af.index = static_cast<int>(frames.size());
+            af.start_sample = static_cast<int64_t>(frames.size()) * pImpl_->hop_size;
+            af.end_sample_exclusive = af.start_sample + pImpl_->frame_size;
+            af.start_ms = static_cast<double>(af.start_sample) / pImpl_->options.sample_rate * 1000.0;
+            af.end_ms = static_cast<double>(af.end_sample_exclusive) / pImpl_->options.sample_rate * 1000.0;
+            af.contains_padding = false;
+
+            frames.push_back(std::move(af));
+
+            // 从缓冲头部移除 hop_size 个样本（保持帧之间的重叠关系）
+            pImpl_->pcm_buffer.erase(
+                pImpl_->pcm_buffer.begin(),
+                pImpl_->pcm_buffer.begin() + std::min(
+                    static_cast<size_t>(pImpl_->hop_size), pImpl_->pcm_buffer.size()));
+        }
+        return frames;
+    }
+
+    std::vector<AudioFrame> AudioFramer::FlushFrames() {
+        std::vector<AudioFrame> frames;
+
+        // 尾部还剩一点数据但不够一帧
+        if (!pImpl_->pcm_buffer.empty() && pImpl_->pcm_buffer.size() < static_cast<size_t>(pImpl_->frame_size)) {
+            if (pImpl_->options.tail_policy == AudioTailPolicy::kDropIncomplete) {
+                // 丢弃，不生成帧
+            } else {
+                // kCoverLastSample / kStartEveryHop：补零凑满一帧
+                std::vector<float> frame_samples = pImpl_->pcm_buffer;
+                frame_samples.resize(pImpl_->frame_size, 0.0f);  // 尾部补零
+                ApplyWindow(frame_samples);
+
+                AudioFrame af;
+                af.samples = std::move(frame_samples);
+                af.index = static_cast<int>(frames.size());
+                af.start_sample = static_cast<int64_t>(frames.size()) * pImpl_->hop_size;
+                af.end_sample_exclusive = af.start_sample + pImpl_->frame_size;
+                af.start_ms = static_cast<double>(af.start_sample) / pImpl_->options.sample_rate * 1000.0;
+                af.end_ms = static_cast<double>(af.end_sample_exclusive) / pImpl_->options.sample_rate * 1000.0;
+                af.contains_padding = true;
+
+                frames.push_back(std::move(af));
+            }
+        }
+
+        // 清空缓冲
+        pImpl_->pcm_buffer.clear();
+        return frames;
+    }
+
+    void AudioFramer::ResetStreaming() {
+        pImpl_->pcm_buffer.clear();
     }
 
 } // namespace audio
