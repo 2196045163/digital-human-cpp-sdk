@@ -56,3 +56,12 @@ add_executable(audio_preprocessor_unit_test audio/audio_preprocessor_unit_test.c
 target_link_libraries(audio_preprocessor_unit_test PRIVATE digital_human_core)
 add_test(NAME audio_preprocessor_unit_test COMMAND audio_preprocessor_unit_test
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# 音频流缓冲模块单元测试
+add_executable(audio_stream_buffer_unit_test audio/audio_stream_buffer_unit_test.cpp)
+target_link_libraries(audio_stream_buffer_unit_test PRIVATE digital_human_core)
+add_test(NAME audio_stream_buffer_unit_test COMMAND audio_stream_buffer_unit_test
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

@@ -21,7 +21,10 @@ test_space*
 models/*.dat
 
 # 生成的输出图
-dlib_result.jpg
+*.jpg
+*.png
+*.wav
+*.mp4
 
 # 模块文档（本地学习用，不推送到仓库）
 docs/
