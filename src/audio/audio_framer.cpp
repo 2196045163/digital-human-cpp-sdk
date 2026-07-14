@@ -52,6 +52,7 @@ namespace {
         int64_t overlap_size;           // 数据帧之间重叠的采样点数
         std::vector<float> window;      // 预计算的窗函数，避免每帧重复算
         std::vector<float> pcm_buffer;  // 流式用的 PCM 缓冲：攒够 frame_size 才切一帧
+        int64_t stream_frame_index = 0; // 流式帧序号，跨 ProcessFrame 调用递增
     };
 
     // ====== 构造/析构/移动 ======
@@ -409,8 +410,9 @@ namespace {
 
             AudioFrame af;
             af.samples = std::move(frame_samples);
-            af.index = static_cast<int>(frames.size());
-            af.start_sample = static_cast<int64_t>(frames.size()) * pImpl_->hop_size;
+            af.index = static_cast<int>(pImpl_->stream_frame_index);
+            af.start_sample = pImpl_->stream_frame_index * pImpl_->hop_size;
+            pImpl_->stream_frame_index++;
             af.end_sample_exclusive = af.start_sample + pImpl_->frame_size;
             af.start_ms = static_cast<double>(af.start_sample) / pImpl_->options.sample_rate * 1000.0;
             af.end_ms = static_cast<double>(af.end_sample_exclusive) / pImpl_->options.sample_rate * 1000.0;
@@ -427,39 +429,42 @@ namespace {
         return frames;
     }
 
+    // FlushFrames：处理流式末尾残留的不足一帧的 PCM 数据。
+    // 注意：流式 ProcessFrame 的帧数可能和整段 Frame() 差 ±1 帧。
+    // 原因：整段 Frame() 根据总长度预先算帧数；流式按"攒够→切帧→删 hop_size"滑动。
+    // 末尾缓冲残差和整段 padding 公式可能偏差 1 帧。该帧几乎全是补零，影响可忽略。
     std::vector<AudioFrame> AudioFramer::FlushFrames() {
         std::vector<AudioFrame> frames;
 
-        // 尾部还剩一点数据但不够一帧
         if (!pImpl_->pcm_buffer.empty() && pImpl_->pcm_buffer.size() < static_cast<size_t>(pImpl_->frame_size)) {
             if (pImpl_->options.tail_policy == AudioTailPolicy::kDropIncomplete) {
                 // 丢弃，不生成帧
             } else {
-                // kCoverLastSample / kStartEveryHop：补零凑满一帧
                 std::vector<float> frame_samples = pImpl_->pcm_buffer;
-                frame_samples.resize(pImpl_->frame_size, 0.0f);  // 尾部补零
+                frame_samples.resize(pImpl_->frame_size, 0.0f);
                 ApplyWindow(frame_samples);
 
                 AudioFrame af;
                 af.samples = std::move(frame_samples);
-                af.index = static_cast<int>(frames.size());
-                af.start_sample = static_cast<int64_t>(frames.size()) * pImpl_->hop_size;
+                af.index = static_cast<int>(pImpl_->stream_frame_index);
+                af.start_sample = pImpl_->stream_frame_index * pImpl_->hop_size;
                 af.end_sample_exclusive = af.start_sample + pImpl_->frame_size;
                 af.start_ms = static_cast<double>(af.start_sample) / pImpl_->options.sample_rate * 1000.0;
                 af.end_ms = static_cast<double>(af.end_sample_exclusive) / pImpl_->options.sample_rate * 1000.0;
                 af.contains_padding = true;
+                pImpl_->stream_frame_index++;
 
                 frames.push_back(std::move(af));
             }
         }
 
-        // 清空缓冲
         pImpl_->pcm_buffer.clear();
         return frames;
     }
 
     void AudioFramer::ResetStreaming() {
         pImpl_->pcm_buffer.clear();
+        pImpl_->stream_frame_index = 0;
     }
 
 } // namespace audio
