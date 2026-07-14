@@ -44,6 +44,7 @@ struct AudioStreamBuffer::Impl {
     // 溢出统计（PushSamples / PullSamples 需要）
     int64_t total_dropped = 0;
     int64_t total_overwritten = 0;
+    int64_t total_pulled = 0;       // 累计读取样本数，供 PullChunk 算 PTS
     int64_t write_wrap = 0;
     int64_t read_wrap = 0;
 
@@ -91,6 +92,7 @@ struct AudioStreamBuffer::Impl {
 
         read_pos = (read_pos + len) % capacity;
         current_size -= len;
+        total_pulled += len;
     }
 };
 
@@ -405,10 +407,10 @@ AudioStreamPullResult AudioStreamBuffer::PullChunk(size_t sample_count, int time
     r.pulled_samples = result.pulled_samples;
     r.stats = result.stats;
 
-    // 填 AudioChunk：PTS = 已读取总样本数 / 采样率 × 1000
+    // PTS = 本次读取前的累计样本数 / 采样率 × 1000
     r.chunk.pcm = std::move(result.pcm);
-    r.chunk.start_pts_ms = static_cast<double>(pImpl_->read_pos
-        - result.pulled_samples + pImpl_->read_wrap * pImpl_->capacity)
+    int64_t before_read = pImpl_->total_pulled - result.pulled_samples;
+    r.chunk.start_pts_ms = static_cast<double>(before_read)
         / pImpl_->options.sample_rate * 1000.0;
     r.chunk.sample_rate = pImpl_->options.sample_rate;
     r.chunk.channels = 1;
@@ -433,6 +435,7 @@ void AudioStreamBuffer::Reset() {
     pImpl_->current_size = 0;
     pImpl_->total_dropped = 0;
     pImpl_->total_overwritten = 0;
+    pImpl_->total_pulled = 0;
     pImpl_->write_wrap = 0;
     pImpl_->read_wrap = 0;
 }
