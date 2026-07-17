@@ -100,10 +100,29 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/audio/audio_stream_pipeline_test.cpp")
     target_link_libraries(audio_stream_pipeline_test PRIVATE digital_human_core)
 endif()
 
+# 18. 构建 ModelLoader 测试程序（验证模型加载模块）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/model/model_loader_test.cpp")
+    add_executable(model_loader_test model/model_loader_test.cpp)
+    target_link_libraries(model_loader_test PRIVATE digital_human_core)
+endif()
+
+# 19. 构建 ModelInput 测试程序（验证模型输入构建 + Adapter）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/model/model_input_test.cpp")
+    add_executable(model_input_test model/model_input_test.cpp)
+    target_link_libraries(model_input_test PRIVATE digital_human_core)
+endif()
+
+# 20. 构建 Wav2Lip 全链路 smoke test（验证模型边界接通）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/model/wav2lip_model_smoke_test.cpp")
+    add_executable(wav2lip_model_smoke_test model/wav2lip_model_smoke_test.cpp)
+    target_link_libraries(wav2lip_model_smoke_test PRIVATE digital_human_core)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, "
         "ncnn_test, ffmpeg_audio_test, dlib_test, image_loader_test, "
         "face_detector_test, face_aligner_test, image_preprocessor_test, "
         "face_mask_generator_test, face_blender_test, audio_loader_test, "
         "audio_framer_test, audio_mel_feature_extract_test, "
         "audio_preprocessor_test, audio_stream_buffer_test, "
-        "audio_stream_pipeline_test")
+        "audio_stream_pipeline_test, model_loader_test, "
+        "model_input_test, wav2lip_model_smoke_test")
