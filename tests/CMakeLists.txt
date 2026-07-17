@@ -1,3 +1,6 @@
+# gtest_discover_tests 来自 CMake 的 GoogleTest 模块；只 find_package(GTest) 不会自动导入该命令。
+include(GoogleTest)
+
 # 图像加载模块单元测试
 add_executable(image_loader_unit_test core/image_loader_unit_test.cpp)
 target_link_libraries(image_loader_unit_test PRIVATE digital_human_core)
@@ -62,6 +65,26 @@ add_executable(audio_stream_buffer_unit_test audio/audio_stream_buffer_unit_test
 target_link_libraries(audio_stream_buffer_unit_test PRIVATE digital_human_core)
 add_test(NAME audio_stream_buffer_unit_test COMMAND audio_stream_buffer_unit_test
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# 模型加载模块单元测试 (GTest)
+add_executable(model_loader_unit_test model/model_loader_unit_test.cpp)
+target_link_libraries(model_loader_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(model_loader_unit_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# 模型输入构建器单元测试 (GTest)
+add_executable(model_input_unit_test model/model_input_unit_test.cpp)
+target_link_libraries(model_input_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(model_input_unit_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# ncnn 适配器单元测试 (GTest)
+add_executable(ncnn_input_adapter_unit_test model/ncnn_input_adapter_unit_test.cpp)
+target_link_libraries(ncnn_input_adapter_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(ncnn_input_adapter_unit_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# Wav2Lip 全链路 smoke test (GTest, 与 example 同名但不同 target)
+add_executable(wav2lip_model_smoke_ctest model/wav2lip_model_smoke_test.cpp)
+target_link_libraries(wav2lip_model_smoke_ctest PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(wav2lip_model_smoke_ctest WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

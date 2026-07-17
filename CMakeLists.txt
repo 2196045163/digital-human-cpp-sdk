@@ -23,7 +23,17 @@ if (OpenMP_CXX_FOUND)
     add_compile_options(${OpenMP_CXX_FLAGS})
 endif()
 
-# ncnn
+# ncnn — 优先使用项目自带的源码编译版本，回退到系统安装版
+if(EXISTS "${CMAKE_SOURCE_DIR}/../ncnn源码/ncnn/build/src/ncnnConfig.cmake"
+   OR EXISTS "${CMAKE_SOURCE_DIR}/../ncnn源码/ncnn/build/install/lib/cmake/ncnn/ncnnConfig.cmake")
+    # 先找 build 目录下的 cmake config
+    if(EXISTS "${CMAKE_SOURCE_DIR}/../ncnn源码/ncnn/build/install/lib/cmake/ncnn/ncnnConfig.cmake")
+        set(ncnn_DIR "${CMAKE_SOURCE_DIR}/../ncnn源码/ncnn/build/install/lib/cmake/ncnn")
+    else()
+        set(ncnn_DIR "${CMAKE_SOURCE_DIR}/../ncnn源码/ncnn/build/src")
+    endif()
+    message(STATUS ">> ncnn: using local build (ncnn_DIR=${ncnn_DIR})")
+endif()
 find_package(ncnn REQUIRED)
 message(STATUS ">> ncnn Found")
 
@@ -75,6 +85,7 @@ add_subdirectory(src)
 add_subdirectory(examples)
 
 # 测试支持
+find_package(GTest REQUIRED)
 enable_testing()
 add_subdirectory(tests)
 
