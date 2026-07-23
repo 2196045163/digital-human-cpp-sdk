@@ -76,6 +76,20 @@ struct ModelLoadResult {
     double time_ms = 0.0;                                     ///< 加载耗时（毫秒）
 };
 
+/// @brief 运行时模型快照：把推理层需要的只读 Net、代次、后端和线程数打包为一个不可变整体
+/// @note  ModelInference 通过 AcquireSnapshot() 一次性获取所有字段，不需要分别查询。
+///        generation 每次成功 Load 后 +1，失败不变，用于批次可复现和问题追溯。
+struct ModelRuntimeSnapshot {
+    std::shared_ptr<const ncnn::Net> model;     ///< 只读模型实例，const 阻止推理方修改权重
+    std::uint64_t generation = 0;               ///< 模型代次（第一次成功加载 = 1，每次成功 +1）
+    ModelBackend backend = ModelBackend::kCpu;   ///< 实际使用的推理后端
+    int effective_num_threads = 0;               ///< 加载时确定的 ncnn 内部线程数
+
+    /// @brief 快照是否可用：model 非空且 generation 为正数
+    bool IsValid() const { return model != nullptr && generation > 0; }
+};
+
+
 /// @brief 模型加载模块（Model Loader）
 ///
 /// 本模块是 ncnn 推理链路中模型生命周期的唯一管理者。负责把一对 Wav2Lip
@@ -112,7 +126,12 @@ public:
     /// @brief 获取只读模型快照
     /// @return 已加载模型的 shared_ptr，未加载时返回空指针
     /// @note  const 限定 + shared_ptr 保证推理方安全持有：热替换不悬空、不能修改权重
+    /// @brief 获取只读模型快照（兼容旧接口，内部基于 AcquireSnapshot 实现）
     std::shared_ptr<const ncnn::Net> AcquireModel() const;
+
+    /// @brief 获取完整运行时快照（Net + generation + backend + 线程数）
+    /// @return 所有字段在同一锁内复制，不会出现字段间不一致
+    ModelRuntimeSnapshot AcquireSnapshot() const;
 
     /// @brief 状态码 → 人类可读字符串，用于日志和 example 打印
     /// @param status 状态码
