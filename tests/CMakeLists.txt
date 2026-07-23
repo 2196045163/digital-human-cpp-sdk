@@ -81,10 +81,27 @@ add_executable(ncnn_input_adapter_unit_test model/ncnn_input_adapter_unit_test.c
 target_link_libraries(ncnn_input_adapter_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)
 gtest_discover_tests(ncnn_input_adapter_unit_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# 无状态单样本模型推理单元测试 (GTest)
+add_executable(model_inference_unit_test model/model_inference_unit_test.cpp)
+target_link_libraries(model_inference_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_include_directories(model_inference_unit_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+gtest_discover_tests(model_inference_unit_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# Scheduler 前置：不含 ncnn 的有界 worker pool 并发语义测试 (GTest)
+add_executable(inference_scheduler_unit_test model/inference_scheduler_unit_test.cpp)
+target_link_libraries(inference_scheduler_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_include_directories(inference_scheduler_unit_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+gtest_discover_tests(inference_scheduler_unit_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 # Wav2Lip 全链路 smoke test (GTest, 与 example 同名但不同 target)
 add_executable(wav2lip_model_smoke_ctest model/wav2lip_model_smoke_test.cpp)
 target_link_libraries(wav2lip_model_smoke_ctest PRIVATE digital_human_core GTest::GTest GTest::Main)
 gtest_discover_tests(wav2lip_model_smoke_ctest WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
-add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
-         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# Golden 上游集成测试 (GTest, 第 4 层证据)
+add_executable(golden_upstream_integration_ctest model/golden_upstream_integration_test.cpp)
+target_link_libraries(golden_upstream_integration_ctest PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(golden_upstream_integration_ctest WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
+#          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

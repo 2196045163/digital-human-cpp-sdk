@@ -161,6 +161,49 @@ TEST(ModelLoaderTest, LoadWithoutWarmup) {
 }
 
 // ============================================================================
+// generation 递增与失败不变
+// ============================================================================
+
+// 第一次成功加载 generation == 1
+TEST(ModelLoaderTest, GenerationIsOneAfterFirstLoad) {
+    ModelLoader loader;
+    auto r = loader.Load("models/wav2lip/wav2lip.param");
+    ASSERT_TRUE(r.success) << r.error_message;
+
+    auto snapshot = loader.AcquireSnapshot();
+    ASSERT_TRUE(snapshot.IsValid());
+    EXPECT_EQ(snapshot.generation, 1u);
+}
+
+// 第二次成功加载 generation == 2
+TEST(ModelLoaderTest, GenerationIncrementsAfterSecondLoad) {
+    ModelLoader loader;
+
+    auto r1 = loader.Load("models/wav2lip/wav2lip.param");
+    ASSERT_TRUE(r1.success) << r1.error_message;
+    EXPECT_EQ(loader.AcquireSnapshot().generation, 1u);
+
+    auto r2 = loader.Load("models/wav2lip/wav2lip.param");
+    ASSERT_TRUE(r2.success) << r2.error_message;
+    EXPECT_EQ(loader.AcquireSnapshot().generation, 2u);
+}
+
+// 加载失败 generation 保持不变
+TEST(ModelLoaderTest, GenerationUnchangedAfterFailedLoad) {
+    ModelLoader loader;
+
+    auto r1 = loader.Load("models/wav2lip/wav2lip.param");
+    ASSERT_TRUE(r1.success) << r1.error_message;
+    auto gen_before = loader.AcquireSnapshot().generation;
+
+    auto r2 = loader.Load("/nonexistent/bad.param");
+    EXPECT_FALSE(r2.success);
+
+    auto gen_after = loader.AcquireSnapshot().generation;
+    EXPECT_EQ(gen_after, gen_before);
+}
+
+// ============================================================================
 // 坏加载不破坏旧模型（候选发布核心回归测试）
 // ============================================================================
 TEST(ModelLoaderTest, BadLoadPreservesOldModel) {

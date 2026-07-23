@@ -118,6 +118,18 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/model/wav2lip_model_smoke_test.cpp")
     target_link_libraries(wav2lip_model_smoke_test PRIVATE digital_human_core)
 endif()
 
+# 21. 构建正式 ModelInference 单样本示例（输出 Result 诊断）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/model/model_inference_test.cpp")
+    add_executable(model_inference_test model/model_inference_test.cpp)
+    target_link_libraries(model_inference_test PRIVATE digital_human_core)
+endif()
+
+# 22. 构建正式 InferenceScheduler batch benchmark（输出 P50/P95/吞吐）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/model/model_inference_benchmark.cpp")
+    add_executable(model_inference_benchmark model/model_inference_benchmark.cpp)
+    target_link_libraries(model_inference_benchmark PRIVATE digital_human_core)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, "
         "ncnn_test, ffmpeg_audio_test, dlib_test, image_loader_test, "
         "face_detector_test, face_aligner_test, image_preprocessor_test, "
@@ -125,4 +137,5 @@ message(STATUS "Configured example targets: demo_app, opencv_test, "
         "audio_framer_test, audio_mel_feature_extract_test, "
         "audio_preprocessor_test, audio_stream_buffer_test, "
         "audio_stream_pipeline_test, model_loader_test, "
-        "model_input_test, wav2lip_model_smoke_test")
+        "model_input_test, wav2lip_model_smoke_test, "
+        "model_inference_test, model_inference_benchmark")

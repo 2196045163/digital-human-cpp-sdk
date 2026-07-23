@@ -19,6 +19,8 @@ test_space*
 
 # 模型文件（太大，不适合 git）
 models/*.dat
+/models/**/*.bin
+models/*
 
 # 生成的输出图
 *.jpg
@@ -32,3 +34,4 @@ docs/
 # 测试文件和测试输出文件
 testdata/
 golden_output/
+

@@ -93,9 +93,9 @@ namespace {
                                     double load_time_ms);
 
     struct ModelLoader::Impl {
-        std::shared_ptr<const ncnn::Net> cur_model_ = nullptr;  // 已发布的模型快照 nullptr = 还没加载
+        ModelRuntimeSnapshot current_snapshot_;  // 已发布的运行时快照：Net + generation + 后端 + 线程数
 
-        mutable std::mutex mtx_;    // 保护 cur_model_ 的读写 mutable 是因为 const 方法（IsReady/AcquireModel）里也要加锁，也就允许这些 const 方法修改锁的状态
+        mutable std::mutex mtx_;    // 保护 current_snapshot_ 的读写；mutable 允许 const 方法加锁
     };
 
     ModelLoader::ModelLoader() : pImpl_(std::make_unique<Impl>()) {}
@@ -103,12 +103,18 @@ namespace {
 
     bool ModelLoader::IsReady() const {
         std::lock_guard<std::mutex> lock(pImpl_->mtx_);
-        return pImpl_->cur_model_ != nullptr;
+        return pImpl_->current_snapshot_.IsValid();
+    }
+
+    ModelRuntimeSnapshot ModelLoader::AcquireSnapshot() const {
+        std::lock_guard<std::mutex> lock(pImpl_->mtx_);
+        return pImpl_->current_snapshot_;
     }
 
     std::shared_ptr<const ncnn::Net> ModelLoader::AcquireModel() const {
+        // 不能持锁调 AcquireSnapshot（它自己也加锁）→ 直接读快照的 model 字段
         std::lock_guard<std::mutex> lock(pImpl_->mtx_);
-        return pImpl_->cur_model_;  // shared_ptr 拷贝，引用计数+1
+        return pImpl_->current_snapshot_.model;
     }
 
 
@@ -253,7 +259,7 @@ namespace {
         }
 
         // 4.创建候选：make_shared<ncnn::Net>()，设置 opt（use_vulkan_compute=false, num_threads）
-        // 创建候选模型实例（局部变量，不关 cur_model_ 的事）
+        // 创建候选模型实例（局部变量，不碰 current_snapshot_）
         // shared_ptr 确保异常时也能正确析构；线程参数在加载前设置，使加载和 warmup 使用同一配置。
         auto candidate = std::make_shared<ncnn::Net>();
         candidate->opt.use_vulkan_compute = false;
@@ -312,8 +318,13 @@ namespace {
             std::lock_guard<std::mutex> lock(pImpl_->mtx_);
             // 无论是否启用 warmup，都在同一个锁内读取旧状态并发布候选，
             // 保证 model_replaced 的诊断值与真正发生的交换一致。
-            ml_res.info.model_replaced = (pImpl_->cur_model_ != nullptr);
-            pImpl_->cur_model_ = candidate;
+            ml_res.info.model_replaced = (pImpl_->current_snapshot_.model != nullptr);
+            ModelRuntimeSnapshot new_snapshot;
+            new_snapshot.model = candidate;
+            new_snapshot.generation = pImpl_->current_snapshot_.generation + 1;
+            new_snapshot.backend = options.backend;
+            new_snapshot.effective_num_threads = options.num_threads;
+            pImpl_->current_snapshot_ = new_snapshot;
         }
 
         return ml_res;
