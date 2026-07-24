@@ -1,6 +1,7 @@
 #pragma once
 
-#include <opencv2/core.hpp>   // cv::Mat, cv::Size, cv::INTER_CUBIC/INTER_LINEAR
+#include <opencv2/core.hpp>    // cv::Mat, cv::Size
+#include <opencv2/imgproc.hpp> // cv::INTER_CUBIC, cv::INTER_LINEAR
 #include <memory>             // std::unique_ptr
 #include <string>             // std::string
 

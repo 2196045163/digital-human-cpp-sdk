@@ -87,6 +87,12 @@ target_link_libraries(model_inference_unit_test PRIVATE digital_human_core GTest
 target_include_directories(model_inference_unit_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 gtest_discover_tests(model_inference_unit_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# 模型输出处理单元测试 (GTest)
+add_executable(output_processor_unit_test model/output_processor_unit_test.cpp)
+target_link_libraries(output_processor_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_include_directories(output_processor_unit_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+gtest_discover_tests(output_processor_unit_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 # Scheduler 前置：不含 ncnn 的有界 worker pool 并发语义测试 (GTest)
 add_executable(inference_scheduler_unit_test model/inference_scheduler_unit_test.cpp)
 target_link_libraries(inference_scheduler_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)

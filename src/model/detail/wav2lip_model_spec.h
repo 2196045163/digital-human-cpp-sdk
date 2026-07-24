@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // ============================================================================
@@ -50,6 +51,16 @@ struct Wav2LipModelSpec {
     static constexpr int kPredChannels = 3;
     static constexpr int kPredWidth    = 96;
     static constexpr int kPredHeight   = 96;
+    static constexpr int kTensorDims = 3;
+    static constexpr int kUnpackedElementPack = 1;
+    static constexpr std::size_t kUnpackedFp32ElementSize = sizeof(float);
+    static constexpr float kPredValueMin = 0.0f;
+    static constexpr float kPredValueMax = 1.0f;
+    static constexpr float kPredRangeTolerance = 1e-6f;
+    static constexpr float kImageQuantizationScale = 255.0f;
+    static constexpr int kBluePlaneIndex = 0;
+    static constexpr int kGreenPlaneIndex = 1;
+    static constexpr int kRedPlaneIndex = 2;
 };
 
 }   // namespace digital_human::model::detail
