@@ -242,6 +242,7 @@ namespace {
 
         opts.frame_duration_ms = 50.0;
         opts.hop_duration_ms = 12.5;
+        opts.window_type = AudioWindowType::kHann;
 
         return opts;
     }

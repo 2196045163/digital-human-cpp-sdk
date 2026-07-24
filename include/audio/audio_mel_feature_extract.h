@@ -43,6 +43,18 @@ enum class MelNormalizeMode {
     kWav2LipSymmetric   ///< Wav2Lip 对称归一化：除以 max_abs_value，clip [-4, 4]（默认）
 };
 
+/// @brief Mel 频率刻度。
+enum class MelScale {
+    kHtk,       ///< HTK 对数公式
+    kSlaney     ///< librosa 默认的 Slaney 分段公式
+};
+
+/// @brief Mel 三角滤波器归一化方式。
+enum class MelFilterNormalization {
+    kNone,
+    kSlaney     ///< 按相邻 Mel 边界带宽做面积归一化（librosa 默认）
+};
+
 /// @brief Mel 提取选项，控制 FFT / Mel 滤波 / 归一化的全部参数
 /// @note  推荐通过 Wav2LipDefault() 或 SpeechDefault() 获取配置
 struct MelFeatureOptions {
@@ -59,6 +71,9 @@ struct MelFeatureOptions {
 
     MelSpectrumMode spectrum_mode = MelSpectrumMode::kMagnitude;   ///< 幅度谱 / 能量谱
     MelNormalizeMode normalize_mode = MelNormalizeMode::kWav2LipSymmetric; ///< 归一化方式
+    MelScale mel_scale = MelScale::kSlaney;                    ///< Wav2Lip 官方 librosa 默认刻度
+    MelFilterNormalization filter_normalization =
+        MelFilterNormalization::kSlaney;                       ///< Wav2Lip 官方滤波器归一化
     bool validate_finite = true;                          ///< 是否检查输入帧含 NaN/Inf
     bool return_debug = false;                            ///< 是否返回调试信息（mel_basis / 一半频谱）
 };
@@ -80,6 +95,9 @@ struct MelFeatureInfo {
     bool has_nan_or_inf = false;                          ///< 是否包含异常值
     MelNormalizeMode normalize_mode = MelNormalizeMode::kWav2LipSymmetric; ///< 实际归一化方式
     MelSpectrumMode spectrum_mode = MelSpectrumMode::kMagnitude; ///< 实际频谱模式
+    MelScale mel_scale = MelScale::kSlaney;               ///< 实际 Mel 频率刻度
+    MelFilterNormalization filter_normalization =
+        MelFilterNormalization::kSlaney;                  ///< 实际滤波器归一化
 };
 
 /// @brief Mel 提取统一返回结果

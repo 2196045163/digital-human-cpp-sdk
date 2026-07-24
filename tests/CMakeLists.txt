@@ -109,5 +109,10 @@ add_executable(golden_upstream_integration_ctest model/golden_upstream_integrati
 target_link_libraries(golden_upstream_integration_ctest PRIVATE digital_human_core GTest::GTest GTest::Main)
 gtest_discover_tests(golden_upstream_integration_ctest WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# 模型视觉质量诊断：同一真实素材的输入几何 / Mel 配置受控变量实验
+add_executable(model_visual_quality_diagnostic_ctest model/model_visual_quality_diagnostic_test.cpp)
+target_link_libraries(model_visual_quality_diagnostic_ctest PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(model_visual_quality_diagnostic_ctest WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 # add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
 #          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
