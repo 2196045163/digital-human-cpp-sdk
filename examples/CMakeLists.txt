@@ -130,6 +130,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/model/model_inference_benchmark.cpp")
     target_link_libraries(model_inference_benchmark PRIVATE digital_human_core)
 endif()
 
+# 23. 构建 OutputProcessor 合成示例（输出 BGR 图像和转换诊断）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/model/output_processor_test.cpp")
+    add_executable(output_processor_test model/output_processor_test.cpp)
+    target_link_libraries(output_processor_test PRIVATE digital_human_core)
+    target_include_directories(output_processor_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, "
         "ncnn_test, ffmpeg_audio_test, dlib_test, image_loader_test, "
         "face_detector_test, face_aligner_test, image_preprocessor_test, "
@@ -138,4 +145,4 @@ message(STATUS "Configured example targets: demo_app, opencv_test, "
         "audio_preprocessor_test, audio_stream_buffer_test, "
         "audio_stream_pipeline_test, model_loader_test, "
         "model_input_test, wav2lip_model_smoke_test, "
-        "model_inference_test, model_inference_benchmark")
+        "model_inference_test, model_inference_benchmark, output_processor_test")

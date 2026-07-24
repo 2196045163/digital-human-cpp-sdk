@@ -12,6 +12,8 @@
 
 #include "core/face_detector.h"
 #include "core/face_aligner.h"
+#include "core/face_blender.h"
+#include "core/face_mask_generator.h"
 #include "core/image_loader.h"
 #include "audio/audio_loader.h"
 #include "audio/audio_preprocessor.h"
@@ -21,11 +23,14 @@
 #include "model/model_inference.h"
 #include "model/input_processor.h"
 #include "model/ncnn_input_adapter.h"
+#include "model/output_processor.h"
 
 #include <gtest/gtest.h>
 #include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <ncnn/net.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -103,6 +108,69 @@ static std::string JoinIndices(const std::vector<std::size_t>& indices) {
     return stream.str();
 }
 
+static void WriteImage(const std::string& path, const cv::Mat& image) {
+    std::error_code ec;
+    std::filesystem::create_directories(
+        std::filesystem::path(path).parent_path(), ec);
+    ASSERT_FALSE(ec) << "cannot create parent directory for " << path;
+    ASSERT_TRUE(cv::imwrite(path, image)) << "cannot write " << path;
+}
+
+struct OutsideMaskStats {
+    std::size_t pixel_count = 0;
+    int max_channel_difference = 0;
+};
+
+/// @brief 检查 alpha 为零的区域是否保持原图，避免“文件能保存”掩盖错误融合。
+static OutsideMaskStats InspectOutsideMaskDifference(
+    const cv::Mat& original_bgr,
+    const core::FaceBlendResult& blend_result) {
+    OutsideMaskStats stats;
+    const cv::Mat& mask = blend_result.restored_mask_3c;
+    const cv::Mat& final_bgr = blend_result.final_bgr;
+
+    for (int row_index = 0; row_index < original_bgr.rows; ++row_index) {
+        for (int column_index = 0; column_index < original_bgr.cols; ++column_index) {
+            const cv::Vec3f alpha = mask.at<cv::Vec3f>(row_index, column_index);
+            if (alpha[0] > 1e-6f) {
+                continue;
+            }
+
+            ++stats.pixel_count;
+            const cv::Vec3b original = original_bgr.at<cv::Vec3b>(row_index, column_index);
+            const cv::Vec3b blended = final_bgr.at<cv::Vec3b>(row_index, column_index);
+            for (int channel_index = 0; channel_index < 3; ++channel_index) {
+                const int difference = std::abs(
+                    static_cast<int>(original[channel_index]) -
+                    static_cast<int>(blended[channel_index]));
+                stats.max_channel_difference = std::max(
+                    stats.max_channel_difference, difference);
+            }
+        }
+    }
+
+    return stats;
+}
+
+struct OutputBlendSampleReport {
+    std::size_t chunk_index = 0;
+    int64_t frame_index = 0;
+    bool has_pts_ms = false;
+    int64_t pts_ms = 0;
+    std::uint64_t model_generation = 0;
+    float pred_min = 0.0f;
+    float pred_max = 0.0f;
+    double inference_ms = 0.0;
+    std::size_t corrected_value_count = 0;
+    double conversion_ms = 0.0;
+    double sharpness_score = 0.0;
+    bool sharpness_passed = true;
+    double blend_ms = 0.0;
+    double end_to_end_ms = 0.0;
+    std::size_t outside_mask_pixel_count = 0;
+    int outside_mask_max_difference = 0;
+};
+
 // ============================================================================
 // 成功路径：golden face.jpg + audio.wav → pred
 // ============================================================================
@@ -171,6 +239,18 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
     ASSERT_EQ(aligned.rows, 96);
     ASSERT_EQ(aligned.cols, 96);
     ASSERT_EQ(aligned.type(), CV_8UC3);
+
+    // generated_face、mouth mask 和 inverse_transform 必须来自同一次对齐，
+    // 否则虽然尺寸可能都正确，嘴部也会落在错误的原图位置。
+    core::FaceMaskGenerator mask_generator;
+    const core::FaceMaskResult mask_r = mask_generator.GenerateAlignedMouthMask(
+        aligned.size(), align_r.aligned_landmarks);
+    ASSERT_TRUE(mask_r.success) << mask_r.error_message;
+    ASSERT_EQ(mask_r.alpha_mask.size(), aligned.size());
+    ASSERT_EQ(mask_r.alpha_mask.type(), CV_32FC1);
+
+    core::FaceBlender face_blender;
+    model::OutputProcessor output_processor;
 
     // ================================================================
     // 音频链路
@@ -266,6 +346,7 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
     // ---- 5. 正式 ModelInference API ----
     // 第一条 representative chunk 先做完整断言；公开 pred 只有通过 snapshot/input、
     // 分类重试和输出三道数值守门后才会出现在 SingleInferenceResult 中。
+    const auto first_sample_start = std::chrono::steady_clock::now();
     const model::SingleInferenceResult first_inference_r =
         model_inference.Infer(snapshot, adapt_r.input, inference_options);
     ASSERT_TRUE(first_inference_r.success) << first_inference_r.error_message;
@@ -318,6 +399,57 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
         std::fabs(first_pred_stats.max_value) > 1e-10f;
     EXPECT_TRUE(non_zero) << "pred is all zeros";
 
+    // 正式输出处理取代检查点 1 的候选图探针：当前通道契约已经由真实 A/B 证据确认。
+    const model::OutputProcessResult first_output_r =
+        output_processor.Convert(first_inference_r.value);
+    ASSERT_TRUE(first_output_r.success) << first_output_r.error_message;
+    ASSERT_EQ(first_output_r.value.generated_face_bgr.type(), CV_8UC3);
+    ASSERT_EQ(first_output_r.value.generated_face_bgr.size(), aligned.size());
+    ASSERT_EQ(first_output_r.value.model_generation, snapshot.generation);
+
+    const core::FaceBlendResult first_blend_r = face_blender.BlendMouthToOriginal(
+        original,
+        first_output_r.value.generated_face_bgr,
+        mask_r.alpha_mask,
+        align_r.inverse_transform);
+    ASSERT_TRUE(first_blend_r.success) << first_blend_r.error_message;
+    ASSERT_EQ(first_blend_r.final_bgr.type(), CV_8UC3);
+    ASSERT_EQ(first_blend_r.final_bgr.size(), original.size());
+
+    const OutsideMaskStats first_outside_mask_stats =
+        InspectOutsideMaskDifference(original, first_blend_r);
+    ASSERT_GT(first_outside_mask_stats.pixel_count, original.total() / 2);
+    EXPECT_EQ(first_outside_mask_stats.max_channel_difference, 0);
+
+    cv::Mat aligned_mask_u8;
+    mask_r.alpha_mask.convertTo(aligned_mask_u8, CV_8UC1, 255.0);
+    WriteImage("golden_output/model_output_generated_face.png",
+               first_output_r.value.generated_face_bgr);
+    WriteImage("golden_output/model_output_aligned_mouth_mask.png", aligned_mask_u8);
+    WriteImage("golden_output/model_output_blended_face.png", first_blend_r.final_bgr);
+
+    std::vector<OutputBlendSampleReport> output_blend_samples;
+    output_blend_samples.reserve(sampled_chunk_indices.size());
+    output_blend_samples.push_back(OutputBlendSampleReport{
+        sampled_chunk_indices.front(),
+        *first_inference_r.value.metadata.frame_index,
+        first_inference_r.value.metadata.pts_ms.has_value(),
+        first_inference_r.value.metadata.pts_ms.value_or(0),
+        first_output_r.value.model_generation,
+        first_inference_r.value.output_info.min_value,
+        first_inference_r.value.output_info.max_value,
+        first_inference_r.value.timing.total_latency_ms,
+        first_output_r.value.conversion_info.corrected_value_count,
+        first_output_r.value.conversion_info.conversion_ms,
+        first_output_r.value.conversion_info.sharpness_score,
+        first_output_r.value.conversion_info.sharpness_passed,
+        first_blend_r.info.time_ms,
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - first_sample_start).count(),
+        first_outside_mask_stats.pixel_count,
+        first_outside_mask_stats.max_channel_difference
+    });
+
     // 单个 chunk 的权威字段来自 Result；以下变量只负责聚合 5 个 Result。
     float sampled_pred_min = first_inference_r.value.output_info.min_value;
     float sampled_pred_max = first_inference_r.value.output_info.max_value;
@@ -348,6 +480,7 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
          ++sample_offset) {
         const std::size_t chunk_index = sampled_chunk_indices[sample_offset];
         SCOPED_TRACE("sampled chunk index=" + std::to_string(chunk_index));
+        const auto sampled_start = std::chrono::steady_clock::now();
 
         model::ModelInputMetadata sampled_meta;
         sampled_meta.frame_index = static_cast<int64_t>(chunk_index);
@@ -405,6 +538,47 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
         EXPECT_FLOAT_EQ(sampled_stats.max_value,
                         sampled_inference_r.value.output_info.max_value);
 
+        const model::OutputProcessResult sampled_output_r =
+            output_processor.Convert(sampled_inference_r.value);
+        ASSERT_TRUE(sampled_output_r.success) << sampled_output_r.error_message;
+        ASSERT_EQ(sampled_output_r.value.generated_face_bgr.type(), CV_8UC3);
+        ASSERT_EQ(sampled_output_r.value.generated_face_bgr.size(), aligned.size());
+        ASSERT_EQ(sampled_output_r.value.model_generation, snapshot.generation);
+
+        const core::FaceBlendResult sampled_blend_r = face_blender.BlendMouthToOriginal(
+            original,
+            sampled_output_r.value.generated_face_bgr,
+            mask_r.alpha_mask,
+            align_r.inverse_transform);
+        ASSERT_TRUE(sampled_blend_r.success) << sampled_blend_r.error_message;
+        ASSERT_EQ(sampled_blend_r.final_bgr.type(), CV_8UC3);
+        ASSERT_EQ(sampled_blend_r.final_bgr.size(), original.size());
+
+        const OutsideMaskStats sampled_outside_mask_stats =
+            InspectOutsideMaskDifference(original, sampled_blend_r);
+        ASSERT_GT(sampled_outside_mask_stats.pixel_count, original.total() / 2);
+        EXPECT_EQ(sampled_outside_mask_stats.max_channel_difference, 0);
+
+        output_blend_samples.push_back(OutputBlendSampleReport{
+            chunk_index,
+            *sampled_inference_r.value.metadata.frame_index,
+            sampled_inference_r.value.metadata.pts_ms.has_value(),
+            sampled_inference_r.value.metadata.pts_ms.value_or(0),
+            sampled_output_r.value.model_generation,
+            sampled_inference_r.value.output_info.min_value,
+            sampled_inference_r.value.output_info.max_value,
+            sampled_inference_r.value.timing.total_latency_ms,
+            sampled_output_r.value.conversion_info.corrected_value_count,
+            sampled_output_r.value.conversion_info.conversion_ms,
+            sampled_output_r.value.conversion_info.sharpness_score,
+            sampled_output_r.value.conversion_info.sharpness_passed,
+            sampled_blend_r.info.time_ms,
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - sampled_start).count(),
+            sampled_outside_mask_stats.pixel_count,
+            sampled_outside_mask_stats.max_channel_difference
+        });
+
         // 聚合时读取每个正式 Result 的诊断，不绕过 API 重复定义主证据。
         sampled_pred_min = std::min(
             sampled_pred_min,
@@ -446,6 +620,52 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
 
     const std::string sampled_indices_text =
         JoinIndices(sampled_chunk_indices);
+
+    ASSERT_EQ(output_blend_samples.size(), sampled_chunk_indices.size());
+    std::ostringstream output_blend_report;
+    output_blend_report << std::boolalpha;
+    output_blend_report
+        << "{\n"
+        << "  \"description\": \"Golden output processing and mouth blend report\",\n"
+        << "  \"queue_wait_ms\": null,\n"
+        << "  \"queue_wait_note\": \"direct ModelInference calls; Scheduler queue not measured\",\n"
+        << "  \"aligned_mask\": {\"width\": " << mask_r.info.width
+        << ", \"height\": " << mask_r.info.height
+        << ", \"type\": \"CV_32FC1\"},\n"
+        << "  \"samples\": [\n";
+    for (std::size_t sample_offset = 0;
+         sample_offset < output_blend_samples.size();
+         ++sample_offset) {
+        const OutputBlendSampleReport& sample = output_blend_samples[sample_offset];
+        output_blend_report
+            << "    {\"chunk_index\": " << sample.chunk_index
+            << ", \"frame_index\": " << sample.frame_index
+            << ", \"pts_ms\": ";
+        if (sample.has_pts_ms) {
+            output_blend_report << sample.pts_ms;
+        } else {
+            output_blend_report << "null";
+        }
+        output_blend_report
+            << ", \"model_generation\": " << sample.model_generation
+            << ", \"pred_range\": [" << sample.pred_min << ", " << sample.pred_max << "]"
+            << ", \"inference_ms\": " << sample.inference_ms
+            << ", \"conversion_ms\": " << sample.conversion_ms
+            << ", \"corrected_value_count\": " << sample.corrected_value_count
+            << ", \"sharpness_score\": " << sample.sharpness_score
+            << ", \"sharpness_passed\": " << sample.sharpness_passed
+            << ", \"blend_ms\": " << sample.blend_ms
+            << ", \"end_to_end_ms\": " << sample.end_to_end_ms
+            << ", \"outside_mask_pixel_count\": " << sample.outside_mask_pixel_count
+            << ", \"outside_mask_max_difference\": "
+            << sample.outside_mask_max_difference << "}";
+        output_blend_report << (sample_offset + 1 == output_blend_samples.size() ? "\n" : ",\n");
+    }
+    output_blend_report << "  ],\n"
+                        << "  \"note\": \"Proves format, coordinate and blend connectivity; NOT lip-sync or visual-quality proof\"\n"
+                        << "}\n";
+    WriteJson("golden_output/model_output_integration_info.json",
+              output_blend_report.str());
 
     // ================================================================
     // Golden JSON 证据

@@ -6,13 +6,12 @@
 
 #include "model/model_inference.h"
 #include "detail/inference_retry_runner.h"
+#include "detail/wav2lip_model_spec.h"
 
 namespace digital_human {
 namespace model {
 
 namespace {
-
-constexpr float kOutputRangeEpsilon = 0.0f; // 输出幅值浮动范围
 
 struct FloatRange {
     float min_value = std::numeric_limits<float>::infinity();
@@ -29,9 +28,9 @@ double ElapsedMs(const std::chrono::steady_clock::time_point& start) {
 /// @note  调用方应先完成 tensor shape 校验；逐 channel/row 遍历会跳过 cstep padding。
 bool AllFiniteUnpackedFp32(const ncnn::Mat& mat) {
     if (mat.empty() ||
-        mat.dims != 3 ||
-        mat.elempack != 1 ||
-        mat.elemsize != sizeof(float)) {
+        mat.dims != detail::Wav2LipModelSpec::kTensorDims ||
+        mat.elempack != detail::Wav2LipModelSpec::kUnpackedElementPack ||
+        mat.elemsize != detail::Wav2LipModelSpec::kUnpackedFp32ElementSize) {
         return false;
     }
 
@@ -120,12 +119,12 @@ FloatRange MeasureUnpackedFp32Range(const ncnn::Mat& mat) {
         // elemsize == sizeof(float)：每个元素是一个 FP32。
         // 不检查 cstep == w*h，因为 channel 间允许有合法 padding。
         const bool mel_shape_valid =
-            input.mel.dims == 3 &&
-            input.mel.w == 16 &&
-            input.mel.h == 80 &&
+            input.mel.dims == detail::Wav2LipModelSpec::kTensorDims &&
+            input.mel.w == detail::Wav2LipModelSpec::kMelFrames &&
+            input.mel.h == detail::Wav2LipModelSpec::kMelBins &&
             input.mel.c == 1 &&
-            input.mel.elempack == 1 &&
-            input.mel.elemsize == sizeof(float);
+            input.mel.elempack == detail::Wav2LipModelSpec::kUnpackedElementPack &&
+            input.mel.elemsize == detail::Wav2LipModelSpec::kUnpackedFp32ElementSize;
         if (!mel_shape_valid) {
             result.success = false;
             result.status = InferenceStatus::kInvalidMelShape;
@@ -155,12 +154,12 @@ FloatRange MeasureUnpackedFp32Range(const ncnn::Mat& mat) {
             return result;
         }
         const bool face_shape_valid =
-            input.face.dims == 3 &&
-            input.face.w == 96 &&
-            input.face.h == 96 &&
-            input.face.c == 6 &&
-            input.face.elempack == 1 &&
-            input.face.elemsize == sizeof(float);
+            input.face.dims == detail::Wav2LipModelSpec::kTensorDims &&
+            input.face.w == detail::Wav2LipModelSpec::kFaceWidth &&
+            input.face.h == detail::Wav2LipModelSpec::kFaceHeight &&
+            input.face.c == detail::Wav2LipModelSpec::kFaceChannels &&
+            input.face.elempack == detail::Wav2LipModelSpec::kUnpackedElementPack &&
+            input.face.elemsize == detail::Wav2LipModelSpec::kUnpackedFp32ElementSize;
         if (!face_shape_valid) {
             result.success = false;
             result.status = InferenceStatus::kInvalidFaceShape;
@@ -200,7 +199,8 @@ FloatRange MeasureUnpackedFp32Range(const ncnn::Mat& mat) {
             // 2.2 按模型 blob 名绑定 Mel 输入。
             // input() 只操作本次局部 Extractor；非零返回码表示绑定失败。
             // kInputMelFailed 属于确定性错误，runner 收到后会立即停止，不会重试。
-            const int mel_input_code = extractor.input("mel", input.mel);
+            const int mel_input_code = extractor.input(
+                detail::Wav2LipModelSpec::kInputMel, input.mel);
             if (mel_input_code != 0) {
                 outcome.status = InferenceStatus::kInputMelFailed;
                 outcome.ncnn_error_code = mel_input_code;
@@ -209,7 +209,8 @@ FloatRange MeasureUnpackedFp32Range(const ncnn::Mat& mat) {
 
             // 2.3 Mel 绑定成功后再绑定 Face；失败时保留本次真实 ncnn 返回码。
             // kInputFaceFailed 同样不在可重试白名单内。
-            const int face_input_code = extractor.input("face", input.face);
+            const int face_input_code = extractor.input(
+                detail::Wav2LipModelSpec::kInputFace, input.face);
             if (face_input_code != 0) {
                 outcome.status = InferenceStatus::kInputFaceFailed;
                 outcome.ncnn_error_code = face_input_code;
@@ -220,7 +221,8 @@ FloatRange MeasureUnpackedFp32Range(const ncnn::Mat& mat) {
             // 非零表示 ncnn 执行失败；kExtractFailed 属于可能恢复的执行错误，
             // runner 可在预算允许时新建另一个 Extractor 再尝试。
             ncnn::Mat candidate_pred;
-            const int extract_code = extractor.extract("pred", candidate_pred);
+            const int extract_code = extractor.extract(
+                detail::Wav2LipModelSpec::kOutputPred, candidate_pred);
             if (extract_code != 0) {
                 outcome.status = InferenceStatus::kExtractFailed;
                 outcome.ncnn_error_code = extract_code;
@@ -281,12 +283,12 @@ FloatRange MeasureUnpackedFp32Range(const ncnn::Mat& mat) {
         // shape 校验
         const auto output_validation_start = std::chrono::steady_clock::now();
         const bool output_shape_valid =
-            candidate_pred.dims == 3 &&
-            candidate_pred.w == 96 &&
-            candidate_pred.h == 96 &&
-            candidate_pred.c == 3 &&
-            candidate_pred.elempack == 1 &&
-            candidate_pred.elemsize == sizeof(float);
+            candidate_pred.dims == detail::Wav2LipModelSpec::kTensorDims &&
+            candidate_pred.w == detail::Wav2LipModelSpec::kPredWidth &&
+            candidate_pred.h == detail::Wav2LipModelSpec::kPredHeight &&
+            candidate_pred.c == detail::Wav2LipModelSpec::kPredChannels &&
+            candidate_pred.elempack == detail::Wav2LipModelSpec::kUnpackedElementPack &&
+            candidate_pred.elemsize == detail::Wav2LipModelSpec::kUnpackedFp32ElementSize;
         if (!output_shape_valid) {
             result.success = false;
             result.status = InferenceStatus::kInvalidOutputShape;
@@ -332,8 +334,11 @@ FloatRange MeasureUnpackedFp32Range(const ncnn::Mat& mat) {
         result.value.output_info.min_value = output_range.min_value;
         result.value.output_info.max_value = output_range.max_value;
 
-        const bool within_expected_range = output_range.min_value >= -kOutputRangeEpsilon &&
-            output_range.max_value <= 1.0f + kOutputRangeEpsilon;
+        const bool within_expected_range =
+            output_range.min_value >= detail::Wav2LipModelSpec::kPredValueMin -
+                detail::Wav2LipModelSpec::kPredRangeTolerance &&
+            output_range.max_value <= detail::Wav2LipModelSpec::kPredValueMax +
+                detail::Wav2LipModelSpec::kPredRangeTolerance;
         if (!within_expected_range) {
             result.success = false;
             result.status = InferenceStatus::kOutputRangeViolation;
