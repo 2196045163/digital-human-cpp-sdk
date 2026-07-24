@@ -16,10 +16,83 @@
 
 #include <gtest/gtest.h>
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #include <cmath>
 #include <limits>
 
 using namespace digital_human::model;
+
+TEST(Wav2LipInputBuilderTest, PreparesOfficialStyleDetectorCropAndCoordinates) {
+    cv::Mat source(120, 160, CV_8UC3);
+    for (int y = 0; y < source.rows; ++y) {
+        for (int x = 0; x < source.cols; ++x) {
+            source.at<cv::Vec3b>(y, x) = cv::Vec3b(
+                static_cast<uchar>(x),
+                static_cast<uchar>(y),
+                static_cast<uchar>((x + y) % 256));
+        }
+    }
+
+    const cv::Rect detected_face(20, 10, 80, 90);
+    std::vector<cv::Point> landmarks(68, cv::Point(60, 55));
+    landmarks[48] = cv::Point(40, 70);
+    landmarks[54] = cv::Point(80, 70);
+
+    Wav2LipInputBuilder builder;
+    const auto result =
+        builder.PrepareFace(source, detected_face, landmarks);
+    ASSERT_TRUE(result.success) << result.error_message;
+    EXPECT_EQ(result.value.source_crop_rect, cv::Rect(20, 10, 80, 100));
+    EXPECT_EQ(result.value.face_bgr.size(), cv::Size(96, 96));
+    EXPECT_EQ(result.value.face_bgr.type(), CV_8UC3);
+    ASSERT_EQ(result.value.landmarks_96.size(), 68u);
+    EXPECT_NEAR(result.value.landmarks_96[48].x, 24.1f, 0.01f);
+    EXPECT_NEAR(result.value.landmarks_96[48].y, 57.58f, 0.01f);
+
+    const cv::Point2f prepared_point = result.value.landmarks_96[48];
+    const cv::Mat& inverse = result.value.inverse_transform;
+    const double restored_x =
+        inverse.at<double>(0, 0) * prepared_point.x +
+        inverse.at<double>(0, 1) * prepared_point.y +
+        inverse.at<double>(0, 2);
+    const double restored_y =
+        inverse.at<double>(1, 0) * prepared_point.x +
+        inverse.at<double>(1, 1) * prepared_point.y +
+        inverse.at<double>(1, 2);
+    EXPECT_NEAR(restored_x, 40.0, 1e-5);
+    EXPECT_NEAR(restored_y, 70.0, 1e-5);
+}
+
+TEST(Wav2LipInputBuilderTest, FacePreparationClampsPaddingAndRejectsBadInputs) {
+    Wav2LipInputBuilder builder;
+    cv::Mat source(80, 80, CV_8UC3, cv::Scalar(1, 2, 3));
+    std::vector<cv::Point> landmarks(68, cv::Point(20, 20));
+
+    Wav2LipFacePrepareOptions options;
+    options.pad_top = 20;
+    options.pad_bottom = 20;
+    options.pad_left = 20;
+    options.pad_right = 20;
+    const auto clamped =
+        builder.PrepareFace(source, cv::Rect(0, 0, 50, 50), landmarks, options);
+    ASSERT_TRUE(clamped.success) << clamped.error_message;
+    EXPECT_EQ(clamped.value.source_crop_rect, cv::Rect(0, 0, 70, 70));
+
+    EXPECT_EQ(
+        builder.PrepareFace(cv::Mat(), cv::Rect(0, 0, 10, 10), landmarks).status,
+        ModelInputStatus::kEmptySourceImage);
+    EXPECT_EQ(
+        builder.PrepareFace(source, cv::Rect(100, 100, 10, 10), landmarks).status,
+        ModelInputStatus::kInvalidFaceRect);
+
+    options.pad_left = -1;
+    EXPECT_EQ(
+        builder.PrepareFace(source, cv::Rect(0, 0, 10, 10), landmarks, options).status,
+        ModelInputStatus::kInvalidFacePadding);
+    EXPECT_EQ(
+        builder.PrepareFace(source, cv::Rect(0, 0, 10, 10), {}).status,
+        ModelInputStatus::kInvalidFaceLandmarks);
+}
 
 // ============================================================================
 // 正常构建：验证 shape、范围、metadata 透传

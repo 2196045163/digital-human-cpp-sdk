@@ -57,6 +57,8 @@ namespace {
         info.frequency_resolution_hz = static_cast<float>(opt.sample_rate) / opt.n_fft;
         info.normalize_mode = opt.normalize_mode;
         info.spectrum_mode = opt.spectrum_mode;
+        info.mel_scale = opt.mel_scale;
+        info.filter_normalization = opt.filter_normalization;
         double v_min, v_max;
         cv::minMaxLoc(mel_spec, &v_min, &v_max);
         info.min_value = static_cast<float>(v_min);
@@ -65,42 +67,78 @@ namespace {
         return info;
     }
 
+    static float HzToSlaneyMel(float hz) {
+        constexpr float kFMin = 0.0f;
+        constexpr float kFSp = 200.0f / 3.0f;
+        constexpr float kMinLogHz = 1000.0f;
+        constexpr float kMinLogMel = (kMinLogHz - kFMin) / kFSp;
+        const float log_step = std::log(6.4f) / 27.0f;
+
+        if (hz < kMinLogHz) {
+            return (hz - kFMin) / kFSp;
+        }
+        return kMinLogMel + std::log(hz / kMinLogHz) / log_step;
+    }
+
+    static float SlaneyMelToHz(float mel) {
+        constexpr float kFMin = 0.0f;
+        constexpr float kFSp = 200.0f / 3.0f;
+        constexpr float kMinLogHz = 1000.0f;
+        constexpr float kMinLogMel = (kMinLogHz - kFMin) / kFSp;
+        const float log_step = std::log(6.4f) / 27.0f;
+
+        if (mel < kMinLogMel) {
+            return kFMin + kFSp * mel;
+        }
+        return kMinLogHz * std::exp(log_step * (mel - kMinLogMel));
+    }
+
     static cv::Mat BuildMelFilterBank(const MelFeatureOptions& opts, int n_fft_bins) {
-        // 1.创建0矩阵 —— 即初始化mel特征矩阵
         cv::Mat mel_basis = cv::Mat::zeros(opts.n_mels, n_fft_bins, CV_32F);
 
-        // 2.算 Mel 边界并等间距取 n_mels+2 个点
-        float mel_min = MelFeatureExtractor::HzToMel(opts.fmin);
-        float mel_max = MelFeatureExtractor::HzToMel(opts.fmax);
-        float step = (mel_max - mel_min) / (opts.n_mels + 1);
+        const auto hz_to_mel = [&opts](float hz) {
+            return opts.mel_scale == MelScale::kSlaney
+                ? HzToSlaneyMel(hz)
+                : MelFeatureExtractor::HzToMel(hz);
+        };
+        const auto mel_to_hz = [&opts](float mel) {
+            return opts.mel_scale == MelScale::kSlaney
+                ? SlaneyMelToHz(mel)
+                : MelFeatureExtractor::MelToHz(mel);
+        };
 
-        std::vector<float> hz_points(opts.n_mels + 2);  // 82 个 Hz 值
-        std::vector<int>   freq_index(opts.n_mels + 2); // 每个 Hz 值映射到 FFT 的第几个频点（0~n_fft_bins-1）
-        for (int i = 0; i < opts.n_mels + 2; i++) {
-            hz_points[i] = MelFeatureExtractor::MelToHz(mel_min + i * step);
-            // Hz → 频点序号：占 Nyquist 的几分之几→频点总数的几分之几
-            freq_index[i] = static_cast<int>(std::floor(
-                hz_points[i] * n_fft_bins / (opts.sample_rate / 2.0f)));
-            freq_index[i] = std::min(freq_index[i], n_fft_bins - 1);  // clamp 到有效范围
+        const float mel_min = hz_to_mel(opts.fmin);
+        const float mel_max = hz_to_mel(opts.fmax);
+        const float mel_step = (mel_max - mel_min) / (opts.n_mels + 1);
+
+        std::vector<float> mel_frequencies(opts.n_mels + 2);
+        for (int index = 0; index < opts.n_mels + 2; ++index) {
+            mel_frequencies[index] = mel_to_hz(mel_min + index * mel_step);
         }
 
-        // 3.画 80 个三角形 - 每个三角形需要三个频点 左右脚部，顶点
-        for (int m = 0; m < opts.n_mels; m++) {
-            int left = freq_index[m];
-            int mid = freq_index[m + 1];
-            int right = freq_index[m + 2];
+        const float fft_frequency_step =
+            static_cast<float>(opts.sample_rate) / opts.n_fft;
+        for (int mel_index = 0; mel_index < opts.n_mels; ++mel_index) {
+            const float left = mel_frequencies[mel_index];
+            const float center = mel_frequencies[mel_index + 1];
+            const float right = mel_frequencies[mel_index + 2];
+            const float lower_width = center - left;
+            const float upper_width = right - center;
 
-            // 左脚→顶点（上升）
-            for (int k = left; k < mid; k++) {
-                mel_basis.at<float>(m, k) = static_cast<float>((k - left)) / (mid - left);
+            for (int fft_index = 0; fft_index < n_fft_bins; ++fft_index) {
+                const float frequency = fft_index * fft_frequency_step;
+                const float lower_slope = (frequency - left) / lower_width;
+                const float upper_slope = (right - frequency) / upper_width;
+                mel_basis.at<float>(mel_index, fft_index) =
+                    std::max(0.0f, std::min(lower_slope, upper_slope));
             }
-            // 顶点→右脚（下降）
-            for (int k = mid; k < right; k++) {
-                mel_basis.at<float>(m, k) = static_cast<float>((right - k)) / (right - mid);
+
+            if (opts.filter_normalization ==
+                MelFilterNormalization::kSlaney) {
+                const float normalization = 2.0f / (right - left);
+                mel_basis.row(mel_index) *= normalization;
             }
         }
-
-        // 返回特征矩阵
         return mel_basis;
     }
 
@@ -180,6 +218,8 @@ MelFeatureOptions MelFeatureExtractor::SpeechDefault() {
     opts.fmin = 80.0f;
     opts.fmax = 8000.0f;
     opts.normalize_mode = MelNormalizeMode::kDb;
+    opts.mel_scale = MelScale::kHtk;
+    opts.filter_normalization = MelFilterNormalization::kNone;
     return opts;
 }
 

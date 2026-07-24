@@ -21,6 +21,12 @@ enum class ModelInputStatus {
     kInvalidFaceSize,       ///< 对齐人脸尺寸不是 96×96（绝不 resize）
     kInvalidFaceType,       ///< 对齐人脸类型不是 CV_8UC3（绝不 convert）
     kNonFiniteFaceValue,    ///< Adapter 收到的人脸 float buffer 包含 NaN 或 Inf
+    kEmptySourceImage,      ///< Wav2Lip 人脸裁剪收到空原图
+    kInvalidSourceImageType,///< Wav2Lip 人脸裁剪原图不是 CV_8UC3
+    kInvalidFaceRect,       ///< 检测框无效或 padding 后没有有效区域
+    kInvalidFacePadding,    ///< padding 为负数
+    kInvalidFaceLandmarks,  ///< 关键点数量不符合 68 点契约
+    kOpenCvError,           ///< 裁剪、缩放或仿射矩阵计算失败
 
     // ---- Mel 音频校验 ----
     kInvalidMelChunkSize,   ///< Mel chunk 长度不是 1280（80×16）
@@ -44,6 +50,33 @@ enum class FaceMaskPolicy {
 struct ModelInputMetadata {
     std::optional<int64_t> pts_ms;       ///< 可选：渲染时间戳（毫秒）
     std::optional<int64_t> frame_index;  ///< 可选：帧序号
+};
+
+/// @brief Wav2Lip 官方推理风格的人脸裁剪选项。
+/// @note 默认只在检测框下方增加 10 像素，用于包含下巴；不会根据双眼旋转人脸。
+struct Wav2LipFacePrepareOptions {
+    int pad_top = 0;
+    int pad_bottom = 10;
+    int pad_left = 0;
+    int pad_right = 0;
+};
+
+/// @brief Wav2Lip 人脸裁剪产物及回贴所需的同一套坐标关系。
+struct Wav2LipPreparedFace {
+    cv::Mat face_bgr;                       ///< 96×96 CV_8UC3 BGR 模型输入脸
+    cv::Rect source_crop_rect;              ///< 原图中实际使用的裁剪框
+    cv::Mat transform;                      ///< 原图坐标到 96×96 坐标的 2×3 矩阵
+    cv::Mat inverse_transform;              ///< 96×96 坐标回到原图的 2×3 矩阵
+    std::vector<cv::Point2f> landmarks_96;  ///< 与 face_bgr 同坐标系的 68 点
+};
+
+/// @brief Wav2Lip 人脸裁剪统一结果。
+struct Wav2LipFacePrepareResult {
+    bool success = false;
+    ModelInputStatus status = ModelInputStatus::kUnknownError;
+    std::string error_message;
+    Wav2LipPreparedFace value;
+    double time_ms = 0.0;
 };
 
 /// @brief 后端无关的 Wav2Lip 语义输入数据
@@ -95,19 +128,28 @@ struct Wav2LipInputResult {
 ///
 /// 职责边界：
 /// - 不做 resize / 颜色空间转换 / 灰度→BGR（Fail Fast）
-/// - 不做人脸检测 / 关键点 / 对齐 / 裁剪（上游模块的事）
+/// - 不做人脸检测；PrepareFace 只消费已经确认的检测框和 68 点
 /// - 不重新计算 Mel / FFT / 重采样（上游模块的事）
 /// - 不做 ncnn 内存适配（NcnnInputAdapter 的事）
 /// - 不做推理（ModelInference 的事）
 class Wav2LipInputBuilder {
 public:
+    /// @brief 按 Wav2Lip 官方推理方式准备人脸：检测框 padding、裁剪、缩放到 96×96。
+    /// @note 不做双眼旋转；返回的关键点和 inverse_transform 与模型输入使用同一坐标关系。
+    Wav2LipFacePrepareResult PrepareFace(
+        const cv::Mat& source_bgr,
+        const cv::Rect& detected_face,
+        const std::vector<cv::Point>& landmarks,
+        const Wav2LipFacePrepareOptions& options =
+            Wav2LipFacePrepareOptions()) const;
+
     /// @brief 构建 Wav2Lip 语义输入数据
-    /// @param aligned_face FaceAligner 的产出：CV_8UC3、BGR、96×96、[0,255]
+    /// @param prepared_face PrepareFace 的产出：CV_8UC3、BGR、96×96、[0,255]
     /// @param freq_major_mel_chunk MelFeatureExtractor 的产出：1280 float、freq-major
     /// @param metadata 可选的时间元数据（pts_ms / frame_index），只透传
     /// @return Wav2LipInputResult，成功时 data 非空、info 与真实数据一致
     Wav2LipInputResult Build(
-        const cv::Mat& aligned_face,
+        const cv::Mat& prepared_face,
         const std::vector<float>& freq_major_mel_chunk,
         const ModelInputMetadata& metadata = ModelInputMetadata()) const;
 

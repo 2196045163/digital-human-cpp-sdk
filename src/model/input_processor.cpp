@@ -21,8 +21,10 @@
 
 #include "model/input_processor.h"
 #include "detail/wav2lip_model_spec.h"
+#include "core/face_landmark_constants.h"
 
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #include <chrono>
 #include <cmath>
 #include <algorithm>
@@ -48,6 +50,18 @@ Wav2LipInputResult MakeInputError(ModelInputStatus status,
     result.success = false;
     result.status = status;
     result.error_message = std::move(msg);
+    result.time_ms = time_ms;
+    return result;
+}
+
+Wav2LipFacePrepareResult MakeFacePrepareError(
+    ModelInputStatus status,
+    std::string message,
+    double time_ms) {
+    Wav2LipFacePrepareResult result;
+    result.success = false;
+    result.status = status;
+    result.error_message = std::move(message);
     result.time_ms = time_ms;
     return result;
 }
@@ -91,11 +105,136 @@ Wav2LipInputInfo MakeInputInfo(const std::vector<float>& face_chw,
 using namespace std::chrono;
 
 // ============================================================================
+// PrepareFace — Wav2Lip 专用人脸几何
+// ============================================================================
+
+Wav2LipFacePrepareResult Wav2LipInputBuilder::PrepareFace(
+    const cv::Mat& source_bgr,
+    const cv::Rect& detected_face,
+    const std::vector<cv::Point>& landmarks,
+    const Wav2LipFacePrepareOptions& options) const {
+    using Spec = Wav2LipModelSpec;
+    const auto start = steady_clock::now();
+    const auto elapsed_ms = [&start]() {
+        return duration<double, std::milli>(steady_clock::now() - start).count();
+    };
+
+    if (source_bgr.empty()) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kEmptySourceImage, "source_bgr is empty", elapsed_ms());
+    }
+    if (source_bgr.type() != CV_8UC3) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kInvalidSourceImageType,
+            "expected source_bgr type CV_8UC3, got " +
+                std::to_string(source_bgr.type()),
+            elapsed_ms());
+    }
+    if (options.pad_top < 0 || options.pad_bottom < 0 ||
+        options.pad_left < 0 || options.pad_right < 0) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kInvalidFacePadding,
+            "face padding must be non-negative", elapsed_ms());
+    }
+    if (detected_face.width <= 0 || detected_face.height <= 0) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kInvalidFaceRect,
+            "detected face rect must have positive width and height", elapsed_ms());
+    }
+    if (landmarks.size() != core::kFaceLandmarkCount) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kInvalidFaceLandmarks,
+            "expected " + std::to_string(core::kFaceLandmarkCount) +
+                " landmarks, got " + std::to_string(landmarks.size()),
+            elapsed_ms());
+    }
+
+    const int64_t left = std::max<int64_t>(
+        0, static_cast<int64_t>(detected_face.x) - options.pad_left);
+    const int64_t top = std::max<int64_t>(
+        0, static_cast<int64_t>(detected_face.y) - options.pad_top);
+    const int64_t right = std::min<int64_t>(
+        source_bgr.cols,
+        static_cast<int64_t>(detected_face.x) + detected_face.width +
+            options.pad_right);
+    const int64_t bottom = std::min<int64_t>(
+        source_bgr.rows,
+        static_cast<int64_t>(detected_face.y) + detected_face.height +
+            options.pad_bottom);
+    if (right <= left || bottom <= top) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kInvalidFaceRect,
+            "padded face rect does not intersect the source image", elapsed_ms());
+    }
+
+    const cv::Rect crop_rect(
+        static_cast<int>(left),
+        static_cast<int>(top),
+        static_cast<int>(right - left),
+        static_cast<int>(bottom - top));
+
+    try {
+        Wav2LipFacePrepareResult result;
+        result.value.source_crop_rect = crop_rect;
+        cv::resize(
+            source_bgr(crop_rect),
+            result.value.face_bgr,
+            cv::Size(Spec::kFaceWidth, Spec::kFaceHeight),
+            0.0,
+            0.0,
+            cv::INTER_LINEAR);
+
+        // cv::resize 按像素中心映射。矩阵中的半像素修正让关键点和后续逆变换
+        // 与模型实际看到的 96×96 图像保持同一坐标关系。
+        const double scale_x =
+            static_cast<double>(Spec::kFaceWidth) / crop_rect.width;
+        const double scale_y =
+            static_cast<double>(Spec::kFaceHeight) / crop_rect.height;
+        result.value.transform = cv::Mat::zeros(2, 3, CV_64F);
+        result.value.transform.at<double>(0, 0) = scale_x;
+        result.value.transform.at<double>(1, 1) = scale_y;
+        result.value.transform.at<double>(0, 2) =
+            -crop_rect.x * scale_x + (scale_x - 1.0) * 0.5;
+        result.value.transform.at<double>(1, 2) =
+            -crop_rect.y * scale_y + (scale_y - 1.0) * 0.5;
+        cv::invertAffineTransform(
+            result.value.transform, result.value.inverse_transform);
+
+        result.value.landmarks_96.reserve(landmarks.size());
+        for (const cv::Point& point : landmarks) {
+            const float x = static_cast<float>(
+                scale_x * point.x + result.value.transform.at<double>(0, 2));
+            const float y = static_cast<float>(
+                scale_y * point.y + result.value.transform.at<double>(1, 2));
+            result.value.landmarks_96.emplace_back(x, y);
+        }
+
+        result.success = true;
+        result.status = ModelInputStatus::kOk;
+        result.time_ms = elapsed_ms();
+        return result;
+    } catch (const cv::Exception& exception) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kOpenCvError, exception.what(), elapsed_ms());
+    } catch (const std::bad_alloc& exception) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kAllocationFailed, exception.what(), elapsed_ms());
+    } catch (const std::exception& exception) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kUnknownError, exception.what(), elapsed_ms());
+    } catch (...) {
+        return MakeFacePrepareError(
+            ModelInputStatus::kUnknownError,
+            "unknown exception while preparing Wav2Lip face", elapsed_ms());
+    }
+}
+
+// ============================================================================
 // Build — 主构建方法
 // ============================================================================
 
 Wav2LipInputResult Wav2LipInputBuilder::Build(
-    const cv::Mat& aligned_face,
+    const cv::Mat& prepared_face,
     const std::vector<float>& freq_major_mel_chunk,
     const ModelInputMetadata& metadata) const {
 
@@ -114,29 +253,30 @@ Wav2LipInputResult Wav2LipInputBuilder::Build(
 
     // ============ ① 校验人脸图像（Fail Fast：不合法就拒绝，不修正）============
 
-    if (aligned_face.empty()) {
+    if (prepared_face.empty()) {
         return MakeInputError(ModelInputStatus::kEmptyAlignedFace,
-                              "aligned_face is empty", elapsed_ms());
+                              "prepared_face is empty", elapsed_ms());
     }
 
     // 尺寸必须严格 96×96 — 绝不 resize。
     // 如果上游 FaceAligner 给错了尺寸，本模块拒绝比悄悄修正更有助于定位 bug。
-    if (aligned_face.rows != Spec::kFaceHeight || aligned_face.cols != Spec::kFaceWidth) {
+    if (prepared_face.rows != Spec::kFaceHeight ||
+        prepared_face.cols != Spec::kFaceWidth) {
         return MakeInputError(
             ModelInputStatus::kInvalidFaceSize,
             "expected " + std::to_string(Spec::kFaceWidth) + "x" +
                 std::to_string(Spec::kFaceHeight) + ", got " +
-                std::to_string(aligned_face.cols) + "x" +
-                std::to_string(aligned_face.rows) + " — will not resize",
+                std::to_string(prepared_face.cols) + "x" +
+                std::to_string(prepared_face.rows) + " — will not resize",
             elapsed_ms());
     }
 
     // 类型必须 CV_8UC3 — 绝不 convert。
     // 灰度 (CV_8UC1)、BGRA (CV_8UC4)、float (CV_32FC3) 都拒绝。
-    if (aligned_face.type() != CV_8UC3) {
+    if (prepared_face.type() != CV_8UC3) {
         return MakeInputError(
             ModelInputStatus::kInvalidFaceType,
-            "expected CV_8UC3, got type " + std::to_string(aligned_face.type()) +
+            "expected CV_8UC3, got type " + std::to_string(prepared_face.type()) +
                 " — will not convert",
             elapsed_ms());
     }
@@ -168,7 +308,7 @@ Wav2LipInputResult Wav2LipInputBuilder::Build(
     //
     // OpenCV ROI 操作：masked(cv::Rect(x,y,w,h)) 返回子矩阵引用，
     // setTo(Scalar(0,0,0)) 直接修改原矩阵的对应区域，高效无额外拷贝。
-    cv::Mat masked = aligned_face.clone();
+    cv::Mat masked = prepared_face.clone();
     const int mask_start = Spec::kFaceMaskStartRow;          // 48 = height/2
     cv::Rect lower_half(0, mask_start, Spec::kFaceWidth,
                         Spec::kFaceHeight - mask_start);     // 宽 96, 高 48
@@ -189,7 +329,7 @@ Wav2LipInputResult Wav2LipInputBuilder::Build(
     // 用 ptr<> 而非 at<> 避免每次访问做边界检查，性能差异在 96×96×6 级别不明显
     // 但这是良好的 C++ 习惯。
     for (int y = 0; y < Spec::kFaceHeight; ++y) {
-        const uchar* row_orig   = aligned_face.ptr<uchar>(y);
+        const uchar* row_orig   = prepared_face.ptr<uchar>(y);
         const uchar* row_masked = masked.ptr<uchar>(y);
         for (int x = 0; x < Spec::kFaceWidth; ++x) {
             int px = x * 3;  // 像素 (x,y) 在行内存中的起始偏移（B 分量）
@@ -257,6 +397,12 @@ std::string Wav2LipInputBuilder::StatusToString(ModelInputStatus status) {
     case ModelInputStatus::kInvalidFaceSize:   return "人脸尺寸不是 96×96";
     case ModelInputStatus::kInvalidFaceType:   return "人脸类型不是 CV_8UC3";
     case ModelInputStatus::kNonFiniteFaceValue:return "人脸输入包含 NaN 或 Inf";
+    case ModelInputStatus::kEmptySourceImage:  return "Wav2Lip 人脸裁剪原图为空";
+    case ModelInputStatus::kInvalidSourceImageType: return "Wav2Lip 人脸裁剪原图类型错误";
+    case ModelInputStatus::kInvalidFaceRect:   return "Wav2Lip 人脸检测框无效";
+    case ModelInputStatus::kInvalidFacePadding:return "Wav2Lip 人脸 padding 无效";
+    case ModelInputStatus::kInvalidFaceLandmarks: return "Wav2Lip 人脸关键点数量无效";
+    case ModelInputStatus::kOpenCvError:       return "OpenCV 人脸裁剪或变换失败";
     case ModelInputStatus::kInvalidMelChunkSize: return "Mel chunk 长度不是 1280";
     case ModelInputStatus::kInvalidMelLayout:  return "Mel 布局异常";
     case ModelInputStatus::kNonFiniteMelValue: return "Mel 包含 NaN 或 Inf";

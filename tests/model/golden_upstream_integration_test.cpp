@@ -2,7 +2,7 @@
 /// @brief 第 4 层：真实 golden face/audio → 上游模块 → Builder → Adapter → 模型 → pred
 ///
 /// 和合成 smoke 的区别：
-///   人脸不是手写渐变图，是 face.jpg → ImageLoader → FaceDetector → FaceAligner 真实处理
+///   人脸不是手写渐变图，是 face.jpg → ImageLoader → FaceDetector → Wav2Lip 裁剪真实处理
 ///   Mel 不是 1000*f+t，是 audio.wav → AudioLoader → Preprocessor → Framer → Mel 真实提取
 ///
 /// 验证的是：上游模块真实产出能否被下游"消费"——type/shape/range 都能过 Builder 的校验。
@@ -11,7 +11,6 @@
 /// 审计已在 2026-07-18 完成：状态码断言全覆盖、失败路径有 independent 用例、JSON 0.00 字段已标注。
 
 #include "core/face_detector.h"
-#include "core/face_aligner.h"
 #include "core/face_blender.h"
 #include "core/face_mask_generator.h"
 #include "core/image_loader.h"
@@ -116,6 +115,32 @@ static void WriteImage(const std::string& path, const cv::Mat& image) {
     ASSERT_TRUE(cv::imwrite(path, image)) << "cannot write " << path;
 }
 
+static double MeanAbsoluteDifference(
+    const std::vector<float>& left,
+    const std::vector<float>& right) {
+    if (left.size() != right.size() || left.empty()) {
+        return -1.0;
+    }
+    double sum = 0.0;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        sum += std::abs(
+            static_cast<double>(left[index]) - static_cast<double>(right[index]));
+    }
+    return sum / static_cast<double>(left.size());
+}
+
+static double MeanAbsoluteImageDifference(
+    const cv::Mat& left,
+    const cv::Mat& right) {
+    if (left.empty() || right.empty() ||
+        left.size() != right.size() ||
+        left.type() != right.type()) {
+        return -1.0;
+    }
+    return cv::norm(left, right, cv::NORM_L1) /
+        static_cast<double>(left.total() * left.channels());
+}
+
 struct OutsideMaskStats {
     std::size_t pixel_count = 0;
     int max_channel_difference = 0;
@@ -169,6 +194,8 @@ struct OutputBlendSampleReport {
     double end_to_end_ms = 0.0;
     std::size_t outside_mask_pixel_count = 0;
     int outside_mask_max_difference = 0;
+    double mel_mad_from_first = 0.0;
+    double generated_face_mad_from_first = 0.0;
 };
 
 // ============================================================================
@@ -225,17 +252,14 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
     cv::Rect face_rect = det_r.detection.faces[0].rect;
     std::vector<cv::Point> landmarks = det_r.landmarks[0].landmarks;
 
-    // ---- 1c. FaceAligner ----
-    core::FaceAligner aligner;
-    core::FaceAlignmentOptions align_opts;
-    align_opts.target_size = 96;
+    // ---- 1c. Wav2Lip 官方风格人脸输入：检测框 padding 后直接缩放，不按双眼旋转 ----
+    model::Wav2LipInputBuilder builder;
+    const model::Wav2LipFacePrepareResult face_prepare_r =
+        builder.PrepareFace(original, face_rect, landmarks);
+    ASSERT_TRUE(face_prepare_r.success) << face_prepare_r.error_message;
+    ASSERT_EQ(face_prepare_r.status, model::ModelInputStatus::kOk);
 
-    auto align_r = aligner.Align(original, face_rect, landmarks, align_opts);
-    ASSERT_TRUE(align_r.success)
-        << core::FaceAligner::StatusToString(align_r.status);
-    ASSERT_EQ(align_r.status, core::ImagePreprocessStatus::kOk);
-
-    const cv::Mat& aligned = align_r.aligned_face;
+    const cv::Mat& aligned = face_prepare_r.value.face_bgr;
     ASSERT_EQ(aligned.rows, 96);
     ASSERT_EQ(aligned.cols, 96);
     ASSERT_EQ(aligned.type(), CV_8UC3);
@@ -244,7 +268,7 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
     // 否则虽然尺寸可能都正确，嘴部也会落在错误的原图位置。
     core::FaceMaskGenerator mask_generator;
     const core::FaceMaskResult mask_r = mask_generator.GenerateAlignedMouthMask(
-        aligned.size(), align_r.aligned_landmarks);
+        aligned.size(), face_prepare_r.value.landmarks_96);
     ASSERT_TRUE(mask_r.success) << mask_r.error_message;
     ASSERT_EQ(mask_r.alpha_mask.size(), aligned.size());
     ASSERT_EQ(mask_r.alpha_mask.type(), CV_32FC1);
@@ -266,27 +290,43 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
     ASSERT_EQ(audio_r.audio.sample_rate, 16000);
 
     // ---- 2b. AudioPreprocessor ----
-    audio::AudioPreprocessor preproc;
+    audio::AudioPreprocessOptions preprocess_options;
+    // 官方 inference 直接对解码后的 [-1,1] PCM 做预加重，不额外执行峰值归一化。
+    preprocess_options.enable_normalize = false;
+    preprocess_options.enable_pre_emphasis = true;
+    audio::AudioPreprocessor preproc(preprocess_options);
     auto preproc_r = preproc.Process(audio_r.audio.pcm);
     ASSERT_TRUE(preproc_r.success)
         << audio::AudioPreprocessor::StatusToString(preproc_r.status);
     ASSERT_EQ(preproc_r.status, audio::AudioPreprocessStatus::kOk);
     ASSERT_FALSE(preproc_r.pcm.empty());
+    EXPECT_FALSE(preproc_r.info.normalized);
+    EXPECT_TRUE(preproc_r.info.pre_emphasized);
 
     // ---- 2c. AudioFramer (流式接口) ----
-    audio::AudioFramer framer;
-    auto frames = framer.ProcessFrame(preproc_r.pcm);
-    auto flushed = framer.FlushFrames();
-    frames.insert(frames.end(), flushed.begin(), flushed.end());
-    ASSERT_FALSE(frames.empty());
+    const audio::AudioFrameOptions frame_options =
+        audio::AudioFramer::Wav2LipDefault();
+    audio::AudioFramer framer(frame_options);
+    const audio::AudioFrameResult frame_r = framer.Frame(preproc_r.pcm);
+    ASSERT_TRUE(frame_r.success)
+        << audio::AudioFramer::StatusToString(frame_r.status);
+    ASSERT_EQ(frame_r.info.frame_size, 800);
+    ASSERT_EQ(frame_r.info.hop_size, 200);
+    ASSERT_EQ(frame_r.info.window_type, audio::AudioWindowType::kHann);
+    ASSERT_FALSE(frame_r.frames.empty());
 
     // ---- 2d. MelFeatureExtractor ----
     std::vector<std::vector<float>> frame_samples;
-    frame_samples.reserve(frames.size());
-    for (const auto& f : frames) {
+    frame_samples.reserve(frame_r.frames.size());
+    for (const auto& f : frame_r.frames) {
         frame_samples.push_back(f.samples);
     }
     audio::MelFeatureExtractor mel_ext;
+    const audio::MelFeatureOptions& mel_options = mel_ext.GetOptions();
+    ASSERT_EQ(mel_options.mel_scale, audio::MelScale::kSlaney);
+    ASSERT_EQ(
+        mel_options.filter_normalization,
+        audio::MelFilterNormalization::kSlaney);
     auto mel_r = mel_ext.ExtractBatch(frame_samples);
     ASSERT_TRUE(mel_r.success)
         << audio::MelFeatureExtractor::StatusToString(mel_r.status);
@@ -323,7 +363,6 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
     meta.pts_ms = 0;
     meta.frame_index = 0;
 
-    model::Wav2LipInputBuilder builder;
     auto build_r = builder.Build(aligned, mel_chunk, meta);
     ASSERT_TRUE(build_r.success)
         << model::Wav2LipInputBuilder::StatusToString(build_r.status);
@@ -411,7 +450,7 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
         original,
         first_output_r.value.generated_face_bgr,
         mask_r.alpha_mask,
-        align_r.inverse_transform);
+        face_prepare_r.value.inverse_transform);
     ASSERT_TRUE(first_blend_r.success) << first_blend_r.error_message;
     ASSERT_EQ(first_blend_r.final_bgr.type(), CV_8UC3);
     ASSERT_EQ(first_blend_r.final_bgr.size(), original.size());
@@ -447,7 +486,9 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - first_sample_start).count(),
         first_outside_mask_stats.pixel_count,
-        first_outside_mask_stats.max_channel_difference
+        first_outside_mask_stats.max_channel_difference,
+        0.0,
+        0.0
     });
 
     // 单个 chunk 的权威字段来自 Result；以下变量只负责聚合 5 个 Result。
@@ -549,7 +590,7 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
             original,
             sampled_output_r.value.generated_face_bgr,
             mask_r.alpha_mask,
-            align_r.inverse_transform);
+            face_prepare_r.value.inverse_transform);
         ASSERT_TRUE(sampled_blend_r.success) << sampled_blend_r.error_message;
         ASSERT_EQ(sampled_blend_r.final_bgr.type(), CV_8UC3);
         ASSERT_EQ(sampled_blend_r.final_bgr.size(), original.size());
@@ -558,6 +599,19 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
             InspectOutsideMaskDifference(original, sampled_blend_r);
         ASSERT_GT(sampled_outside_mask_stats.pixel_count, original.total() / 2);
         EXPECT_EQ(sampled_outside_mask_stats.max_channel_difference, 0);
+        const double mel_mad_from_first = MeanAbsoluteDifference(
+            mel_chunk, chunk_r.chunks[chunk_index]);
+        const double generated_face_mad_from_first =
+            MeanAbsoluteImageDifference(
+                first_output_r.value.generated_face_bgr,
+                sampled_output_r.value.generated_face_bgr);
+        EXPECT_GT(mel_mad_from_first, 0.0)
+            << "different time positions produced identical Mel chunks";
+        // golden/audio.wav 是持续 3 秒的 440 Hz 恒定测试音，不是语音。
+        // 不同时间 chunk 只有很小的相位差，量化后的生成脸完全一致属于合理结果。
+        // 模型是否真正响应不同音频，改由 model_visual_quality_diagnostic_ctest
+        // 使用“真实 Mel 与全零 Mel”的受控 A/B 输入验证。这里仍记录图像 MAD，
+        // 但不能把“恒定音必须产生不同嘴型”误写成正式链路的成功条件。
 
         output_blend_samples.push_back(OutputBlendSampleReport{
             chunk_index,
@@ -576,7 +630,9 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
             std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - sampled_start).count(),
             sampled_outside_mask_stats.pixel_count,
-            sampled_outside_mask_stats.max_channel_difference
+            sampled_outside_mask_stats.max_channel_difference,
+            mel_mad_from_first,
+            generated_face_mad_from_first
         });
 
         // 聚合时读取每个正式 Result 的诊断，不绕过 API 重复定义主证据。
@@ -658,7 +714,10 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
             << ", \"end_to_end_ms\": " << sample.end_to_end_ms
             << ", \"outside_mask_pixel_count\": " << sample.outside_mask_pixel_count
             << ", \"outside_mask_max_difference\": "
-            << sample.outside_mask_max_difference << "}";
+            << sample.outside_mask_max_difference
+            << ", \"mel_mad_from_first\": " << sample.mel_mad_from_first
+            << ", \"generated_face_mad_from_first\": "
+            << sample.generated_face_mad_from_first << "}";
         output_blend_report << (sample_offset + 1 == output_blend_samples.size() ? "\n" : ",\n");
     }
     output_blend_report << "  ],\n"
@@ -677,7 +736,7 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
             "  \"description\": \"Golden upstream integration: real face.jpg + audio.wav\",\n"
             "  \"image_loader_time_ms\": \"%s\",\n"
             "  \"face_detect_time_ms\": %.2f,\n"
-            "  \"face_align_time_ms\": %.2f,\n"
+            "  \"face_prepare_time_ms\": %.2f,\n"
             "  \"audio_load_time_ms\": %.2f,\n"
             "  \"audio_preprocess_time_ms\": \"%s\",\n"
             "  \"audio_frame_time_ms\": \"%s\",\n"
@@ -708,7 +767,7 @@ TEST(GoldenUpstreamIntegration, FaceAndAudioToPred) {
             "  \"note\": \"Proves golden upstream connectivity; NOT visual quality\"\n"
             "}\n",
             "ImageLoader tracks time in info, not result struct",
-            det_r.time_ms, align_r.time_ms,
+            det_r.time_ms, face_prepare_r.time_ms,
             audio_r.time_ms,
             "timing in info.process_time_ms, zero under O(1) preprocessing",
             "streaming interface: per-chunk timing not aggregated here",
