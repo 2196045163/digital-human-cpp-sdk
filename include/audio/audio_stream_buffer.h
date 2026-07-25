@@ -119,7 +119,7 @@ struct AudioStreamPullResult {
 ///
 /// 固定容量的环形缓冲区（Ring Buffer），为生产者和消费者之间提供流式 PCM 缓冲。
 /// 支持三种溢出策略（Block/OverwriteOldest/DropNewest）、PTS 时间戳、告警回调。
-/// 第一阶段单线程非阻塞，后续加入 mutex+condition_variable 做多线程阻塞。
+/// 使用 mutex 和 condition_variable 保护并发读写及阻塞等待。
 ///
 /// 职责边界：
 /// - 不做音频解码/重采样（属于 AudioLoader）
@@ -197,7 +197,7 @@ public:
     AudioStreamBufferStats GetStats() const;
     /// @}
 
-    /// @brief 设置告警回调（溢出/覆盖/丢弃时触发，锁外调用）
+    /// @brief 设置告警回调（溢出/覆盖/丢弃时触发；回调不得重入本对象）
     void SetWarningCallback(WarningCallback callback);
 
     /// @brief 按毫秒和采样率换算容量（样本数 = sample_rate × duration_ms / 1000）

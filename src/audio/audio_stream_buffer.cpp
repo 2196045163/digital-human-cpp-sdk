@@ -350,9 +350,19 @@ AudioStreamPullResult AudioStreamBuffer::PullSamples(size_t sample_count, int ti
         }
     }
 
+    // 起始索引必须在同一把锁内读取，避免并发消费者推进累计计数。
+    const int64_t start_sample_index = pImpl_->total_pulled;
+
     // 数据够了，读取
     pImpl_->ReadInternal(asp_res.pcm, sample_count);
     asp_res.pulled_samples = sample_count;
+    // PullChunk 通过同一个结果取得与 PCM 对应的时间 metadata。
+    asp_res.chunk.start_sample_index = start_sample_index;
+    asp_res.chunk.start_pts_ms =
+        static_cast<double>(start_sample_index) /
+        pImpl_->options.sample_rate * 1000.0;
+    asp_res.chunk.sample_rate = pImpl_->options.sample_rate;
+    asp_res.chunk.channels = 1;
 
     // 叫醒一个正在等空间的生产者（PushSamples 可能在 Block 等待）
     pImpl_->not_full_cv.notify_one();
@@ -407,13 +417,9 @@ AudioStreamPullResult AudioStreamBuffer::PullChunk(size_t sample_count, int time
     r.pulled_samples = result.pulled_samples;
     r.stats = result.stats;
 
-    // PTS = 本次读取前的累计样本数 / 采样率 × 1000
+    // metadata 已在读取 PCM 的同一锁内捕获；这里仅组装公开 AudioChunk。
+    r.chunk = std::move(result.chunk);
     r.chunk.pcm = std::move(result.pcm);
-    int64_t before_read = pImpl_->total_pulled - result.pulled_samples;
-    r.chunk.start_pts_ms = static_cast<double>(before_read)
-        / pImpl_->options.sample_rate * 1000.0;
-    r.chunk.sample_rate = pImpl_->options.sample_rate;
-    r.chunk.channels = 1;
 
     return r;
 }
