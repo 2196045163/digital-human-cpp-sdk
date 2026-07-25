@@ -66,6 +66,14 @@ target_link_libraries(audio_stream_buffer_unit_test PRIVATE digital_human_core)
 add_test(NAME audio_stream_buffer_unit_test COMMAND audio_stream_buffer_unit_test
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# 时间戳管理模块单元测试 (GTest)
+add_executable(timestamp_manager_unit_test core/timestamp_manager_unit_test.cpp)
+target_link_libraries(timestamp_manager_unit_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(timestamp_manager_unit_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "timestamp_manager.")
+
 # 模型加载模块单元测试 (GTest)
 add_executable(model_loader_unit_test model/model_loader_unit_test.cpp)
 target_link_libraries(model_loader_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)
