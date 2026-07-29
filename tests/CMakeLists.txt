@@ -66,6 +66,22 @@ target_link_libraries(audio_stream_buffer_unit_test PRIVATE digital_human_core)
 add_test(NAME audio_stream_buffer_unit_test COMMAND audio_stream_buffer_unit_test
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# 帧调度模块单元测试 (GTest)
+add_executable(frame_scheduler_unit_test core/frame_scheduler_unit_test.cpp)
+target_link_libraries(frame_scheduler_unit_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(frame_scheduler_unit_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "frame_scheduler.")
+
+# 帧调度窄集成测试 (GTest, TimestampManager + FaceBlender + FrameScheduler)
+add_executable(frame_scheduler_integration_test core/frame_scheduler_integration_test.cpp)
+target_link_libraries(frame_scheduler_integration_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(frame_scheduler_integration_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "frame_scheduler.")
+
 # 时间戳管理模块单元测试 (GTest)
 add_executable(timestamp_manager_unit_test core/timestamp_manager_unit_test.cpp)
 target_link_libraries(timestamp_manager_unit_test

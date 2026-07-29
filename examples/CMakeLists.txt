@@ -143,6 +143,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/core/timestamp_manager_test.cpp")
     target_link_libraries(timestamp_manager_test PRIVATE digital_human_core)
 endif()
 
+# 25. 构建帧调度示例（合成帧 + 确定性 trace）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/core/frame_scheduler_test.cpp")
+    add_executable(frame_scheduler_test core/frame_scheduler_test.cpp)
+    target_link_libraries(frame_scheduler_test PRIVATE digital_human_core)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, "
         "ncnn_test, ffmpeg_audio_test, dlib_test, image_loader_test, "
         "face_detector_test, face_aligner_test, image_preprocessor_test, "
@@ -152,4 +158,5 @@ message(STATUS "Configured example targets: demo_app, opencv_test, "
         "audio_stream_pipeline_test, model_loader_test, "
         "model_input_test, wav2lip_model_smoke_test, "
         "model_inference_test, model_inference_benchmark, "
-        "output_processor_test, timestamp_manager_test")
+        "output_processor_test, timestamp_manager_test, "
+        "frame_scheduler_test")
