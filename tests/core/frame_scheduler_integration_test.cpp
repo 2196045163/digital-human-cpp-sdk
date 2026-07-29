@@ -1,7 +1,7 @@
 /// @brief 帧调度窄集成测试。
 ///
-/// 验证链路: TimestampManager → FaceBlender → FrameScheduler
-/// 不加载真实模型，使用合成图像。
+/// 验证链路: TimestampManager → FaceBlender → FrameScheduler。
+/// 合成测试证明契约正确；真实数据测试证明非合成图像能正常走通。
 /// 核心库不打印。
 
 #include "core/face_blender.h"
@@ -9,9 +9,11 @@
 #include "core/timestamp_manager.h"
 
 #include <cstdint>
+#include <iostream>
 
 #include <gtest/gtest.h>
 #include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 namespace digital_human {
 namespace core {
@@ -153,6 +155,81 @@ TEST(FrameSchedulerIntegrationTest, MultipleFramesThroughPipeline) {
         EXPECT_EQ(result.selected_frame->frame_bgr.cols, 128);
         EXPECT_EQ(result.selected_frame->frame_bgr.rows, 128);
     }
+}
+
+// ===================================================================
+// 真实数据测试——防止自欺欺人
+// 素材: testdata/golden/face.jpg (不可控——真实图片，不是 64x64 色块)
+// 证明: 真实图像经 PushFrame/Schedule 进出后像素、尺寸、PTS 全部保持
+// ===================================================================
+
+TEST(FrameSchedulerRealDataTest, RealImageRoundTrip) {
+    // 1. 加载真实人脸图
+    cv::Mat real_face = cv::imread("testdata/golden/face.jpg");
+    ASSERT_FALSE(real_face.empty()) << "FATAL: testdata/golden/face.jpg 无法加载";
+    ASSERT_EQ(real_face.type(), CV_8UC3) << "FATAL: 素材格式不是 CV_8UC3";
+
+    std::cout << "[REAL-DATA] 素材: testdata/golden/face.jpg "
+              << real_face.cols << "x" << real_face.rows
+              << " CV_8UC3\n";
+
+    // 2. 用 TimestampManager 生成 PTS（不是手填的常量）
+    FrameRate fps{25, 1};  // 25fps，frame 0
+    auto pts_result = TimestampManager::FromVideoFrameIndex(0, fps);
+    ASSERT_TRUE(pts_result.success);
+    std::cout << "[REAL-DATA] PTS: " << pts_result.value.microseconds
+              << "us (TimestampManager, 25fps frame 0)\n";
+
+    // 3. 构建 VideoFrame
+    video::VideoFrame vf;
+    vf.frame_bgr = real_face;
+    vf.pts = pts_result.value;
+    vf.frame_index = 0;
+
+    // 4. PushFrame
+    FrameScheduler scheduler(MakeIntegrationConfig());
+    PushResult push_r = scheduler.PushFrame(vf);
+    EXPECT_EQ(push_r, PushResult::kAccepted);
+    std::cout << "[REAL-DATA] PushFrame → " << (push_r == PushResult::kAccepted ? "Accepted" : "REJECTED") << "\n";
+
+    // 5. Schedule
+    auto result = scheduler.Schedule(pts_result.value);
+    ASSERT_EQ(result.action, ScheduleAction::kDeliver)
+        << "ref 匹配 PTS 时必须交付";
+    ASSERT_TRUE(result.selected_frame.has_value());
+
+    std::cout << "[REAL-DATA] Schedule → action=Deliver"
+              << " diff=" << result.timing_diff_us.value()
+              << "us dropped=" << result.dropped_this_call
+              << " qsize=" << result.queue_size_after
+              << " state=" << (result.state_after == SchedulerState::kRunning ? "Running" : "Buffering")
+              << "\n";
+
+    // 6. 验收交付帧
+    const auto& out = result.selected_frame.value();
+    EXPECT_EQ(out.frame_bgr.cols, real_face.cols);
+    EXPECT_EQ(out.frame_bgr.rows, real_face.rows);
+    EXPECT_EQ(out.frame_bgr.type(), CV_8UC3);
+    EXPECT_EQ(out.pts.microseconds, pts_result.value.microseconds);
+    EXPECT_EQ(out.frame_index, 0);
+    EXPECT_TRUE(result.timing_diff_us.has_value());
+
+    // 逐像素对比——最关键的防自欺断言
+    cv::Mat diff;
+    cv::absdiff(real_face, out.frame_bgr, diff);
+    int non_zero = cv::countNonZero(cv::Mat(diff.reshape(1, 0)));
+
+    auto p0_in = real_face.at<cv::Vec3b>(0, 0);
+    auto p0_out = out.frame_bgr.at<cv::Vec3b>(0, 0);
+
+    std::cout << "[REAL-DATA] 输入像素(0,0): B=" << (int)p0_in[0]
+              << " G=" << (int)p0_in[1] << " R=" << (int)p0_in[2] << "\n";
+    std::cout << "[REAL-DATA] 输出像素(0,0): B=" << (int)p0_out[0]
+              << " G=" << (int)p0_out[1] << " R=" << (int)p0_out[2] << "\n";
+    std::cout << "[REAL-DATA] 全图差异像素数: " << non_zero
+              << " / " << (real_face.cols * real_face.rows * 3) << "\n";
+
+    EXPECT_EQ(non_zero, 0) << "真实图像经过调度器后像素完全不能变";
 }
 
 }  // namespace core
