@@ -90,6 +90,26 @@ gtest_discover_tests(timestamp_manager_unit_test
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TEST_PREFIX "timestamp_manager.")
 
+# PortAudio callback/playback contract tests (hardware-independent paths only)
+add_executable(portaudio_playback_unit_test
+    sync/portaudio_playback_unit_test.cpp)
+target_link_libraries(portaudio_playback_unit_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_include_directories(portaudio_playback_unit_test
+    PRIVATE ${PROJECT_SOURCE_DIR}/src)
+gtest_discover_tests(portaudio_playback_unit_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "portaudio_playback.")
+
+# Audio clock -> FrameScheduler coordinator tests
+add_executable(audio_video_synchronous_unit_test
+    sync/audio_video_synchronous_unit_test.cpp)
+target_link_libraries(audio_video_synchronous_unit_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(audio_video_synchronous_unit_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "audio_video_synchronous.")
+
 # 模型加载模块单元测试 (GTest)
 add_executable(model_loader_unit_test model/model_loader_unit_test.cpp)
 target_link_libraries(model_loader_unit_test PRIVATE digital_human_core GTest::GTest GTest::Main)

@@ -1,6 +1,6 @@
 /// @file    audio_mel_feature_extract_test.cpp
 /// @brief   MelFeatureExtractor 手动测试：AudioLoader → AudioFramer → Mel → Chunk 完整管线
-/// @note    默认用 test_audio.wav，也可命令行指定其他音频文件
+/// @note    默认用 testdata/golden/audio.wav，也可命令行指定其他音频文件
 
 #include <cmath>       // std::round, M_PI
 #include <filesystem>  // std::filesystem::create_directories
@@ -21,7 +21,7 @@ using namespace digital_human::audio;
 int main(int argc, char* argv[]) {
     std::cout << "=== Digital Human SDK: MelFeatureExtractor Test ===\n\n";
 
-    std::string audio_path = (argc >= 2) ? argv[1] : "test_audio.wav";
+    std::string audio_path = (argc >= 2) ? argv[1] : "testdata/golden/audio.wav";
 
     // 1. AudioLoader：加载音频文件 → 16kHz / mono / float PCM
     AudioLoader loader;

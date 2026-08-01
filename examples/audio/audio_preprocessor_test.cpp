@@ -1,6 +1,6 @@
 /// @file    audio_preprocessor_test.cpp
 /// @brief   AudioPreprocessor 手动测试：AudioLoader → Preprocessor → 统计信息
-/// @note    默认用 test_audio.wav，也可命令行指定其他音频文件
+/// @note    默认用 testdata/golden/audio.wav，也可命令行指定其他音频文件
 
 #include <cmath>       // std::abs
 #include <filesystem>  // std::filesystem::create_directories
@@ -17,7 +17,7 @@ using namespace digital_human::audio;
 int main(int argc, char* argv[]) {
     std::cout << "=== Digital Human SDK: AudioPreprocessor Test ===\n\n";
 
-    std::string audio_path = (argc >= 2) ? argv[1] : "test_audio.wav";
+    std::string audio_path = (argc >= 2) ? argv[1] : "testdata/golden/audio.wav";
 
     // 1. AudioLoader：加载音频 → float PCM
     AudioLoader loader;

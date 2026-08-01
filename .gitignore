@@ -35,3 +35,11 @@ docs/
 testdata/
 golden_output/
 
+# 
+debug_load_model 
+
+debug_load_model.cpp
+
+executor
+
+test_imread.cpp

@@ -14,6 +14,10 @@
 
 using namespace digital_human::audio;
 
+namespace {
+constexpr const char* kGoldenAudioPath = "testdata/golden/audio.wav";
+}
+
 // ============================================================================
 // 让 enum class 可被直接打印
 // ============================================================================
@@ -203,13 +207,13 @@ int main() {
 
     AudioLoadOptions opt_bad_rate;
     opt_bad_rate.target_sample_rate = 0;
-    r = loader.Probe("test_audio.wav", opt_bad_rate);
+    r = loader.Probe(kGoldenAudioPath, opt_bad_rate);
     EXPECT_FALSE(r.success, "rate=0: success == false");
     EXPECT_EQ(r.status, AudioLoadStatus::kInvalidTargetSampleRate,
               "rate=0 -> kInvalidTargetSampleRate");
 
     opt_bad_rate.target_sample_rate = -1;
-    r = loader.Probe("test_audio.wav", opt_bad_rate);
+    r = loader.Probe(kGoldenAudioPath, opt_bad_rate);
     EXPECT_EQ(r.status, AudioLoadStatus::kInvalidTargetSampleRate,
               "rate=-1 -> kInvalidTargetSampleRate");
 
@@ -220,7 +224,7 @@ int main() {
 
     AudioLoadOptions opt_bad_ch;
     opt_bad_ch.target_channels = 2;   // 当前仅支持 1
-    r = loader.Probe("test_audio.wav", opt_bad_ch);
+    r = loader.Probe(kGoldenAudioPath, opt_bad_ch);
     EXPECT_FALSE(r.success, "channels=2: success == false");
     EXPECT_EQ(r.status, AudioLoadStatus::kInvalidTargetChannels,
               "channels=2 -> kInvalidTargetChannels");
@@ -230,7 +234,7 @@ int main() {
     // -----------------------------------------------------------------------
     std::cout << "[11] Probe: valid WAV file ...\n";
 
-    r = loader.Probe("test_audio.wav");
+    r = loader.Probe(kGoldenAudioPath);
     EXPECT_TRUE(r.success, "valid wav: success == true");
     EXPECT_EQ(r.status, AudioLoadStatus::kOk, "valid wav -> kOk");
 
@@ -263,7 +267,7 @@ int main() {
     // -----------------------------------------------------------------------
     std::cout << "[13] LoadFromFile (float PCM) ...\n";
 
-    auto lr = loader.LoadFromFile("test_audio.wav");
+    auto lr = loader.LoadFromFile(kGoldenAudioPath);
     EXPECT_TRUE(lr.success, "LoadFromFile should succeed");
     EXPECT_EQ(lr.status, AudioLoadStatus::kOk, "status == kOk");
     EXPECT_FALSE(lr.audio.pcm.empty(), "float pcm should not be empty");
@@ -275,7 +279,7 @@ int main() {
     EXPECT_TRUE(*fmin >= -1.0001, "float min >= -1.0");
     EXPECT_TRUE(*fmax <= 1.0001, "float max <= 1.0");
     // int16 和 float 样本数一致
-    auto ir_check = loader.LoadInt16FromFile("test_audio.wav");
+    auto ir_check = loader.LoadInt16FromFile(kGoldenAudioPath);
     EXPECT_EQ(lr.audio.pcm.size(), ir_check.pcm.size(), "float pcm size == int16 pcm size");
 
     // -----------------------------------------------------------------------
@@ -328,7 +332,7 @@ int main() {
 
     AudioLoadOptions opt_bad;
     opt_bad.target_sample_rate = 0;
-    ir = loader.LoadInt16FromFile("test_audio.wav", opt_bad);
+    ir = loader.LoadInt16FromFile(kGoldenAudioPath, opt_bad);
     EXPECT_EQ(ir.status, AudioLoadStatus::kInvalidTargetSampleRate, "rate=0 -> kInvalidTargetSampleRate");
 
     // -----------------------------------------------------------------------
@@ -336,7 +340,7 @@ int main() {
     // -----------------------------------------------------------------------
     std::cout << "[19] LoadInt16FromFile: valid WAV decode ...\n";
 
-    ir = loader.LoadInt16FromFile("test_audio.wav");
+    ir = loader.LoadInt16FromFile(kGoldenAudioPath);
     EXPECT_TRUE(ir.success, "decode should succeed");
     EXPECT_EQ(ir.status, AudioLoadStatus::kOk, "status == kOk");
     EXPECT_FALSE(ir.pcm.empty(), "pcm should not be empty");
@@ -378,7 +382,7 @@ int main() {
 
     AudioLoadOptions opt_limit;
     opt_limit.max_samples = 500;  // 只解码前 500 个采样点
-    auto ir_limit = loader.LoadInt16FromFile("test_audio.wav", opt_limit);
+    auto ir_limit = loader.LoadInt16FromFile(kGoldenAudioPath, opt_limit);
     EXPECT_TRUE(ir_limit.success, "max_samples: decode should succeed");
     EXPECT_TRUE(static_cast<int64_t>(ir_limit.pcm.size()) <= 500,
                 "pcm.size() <= max_samples");
@@ -390,7 +394,7 @@ int main() {
 
     AudioLoader loader_8k(8000);
     opt_bad.target_sample_rate = 8000;  // 重置为合法值
-    auto ir_8k = loader_8k.LoadInt16FromFile("test_audio.wav", opt_bad);
+    auto ir_8k = loader_8k.LoadInt16FromFile(kGoldenAudioPath, opt_bad);
     EXPECT_TRUE(ir_8k.success, "8kHz decode should succeed");
     EXPECT_EQ(ir_8k.info.target_sample_rate, 8000, "target_sample_rate == 8000");
     // 8kHz 样本数 ≈ 16000 的 1/2
@@ -402,7 +406,7 @@ int main() {
     // -----------------------------------------------------------------------
     std::cout << "[24] LoadBatch ...\n";
 
-    auto batch = loader.LoadBatch({"test_audio.wav", "test_audio.wav"});
+    auto batch = loader.LoadBatch({kGoldenAudioPath, kGoldenAudioPath});
     EXPECT_EQ(batch.size(), size_t(2), "batch size == 2");
     EXPECT_TRUE(batch[0].success, "batch[0] should succeed");
     EXPECT_TRUE(batch[1].success, "batch[1] should succeed");
@@ -414,7 +418,7 @@ int main() {
     // -----------------------------------------------------------------------
     std::cout << "[25] LoadBatch: mixed success + failure ...\n";
 
-    auto batch2 = loader.LoadBatch({"test_audio.wav", "__not_exist.wav", "test_audio.wav"});
+    auto batch2 = loader.LoadBatch({kGoldenAudioPath, "__not_exist.wav", kGoldenAudioPath});
     EXPECT_EQ(batch2.size(), size_t(3), "batch size == 3");
     EXPECT_TRUE(batch2[0].success,   "[0] should succeed");
     EXPECT_FALSE(batch2[1].success,  "[1] should fail (file not found)");

@@ -47,8 +47,12 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libswscale
 )
 
+# PortAudio（音频播放与音频主时钟）
+pkg_check_modules(PORTAUDIO REQUIRED IMPORTED_TARGET portaudio-2.0)
+
 message(STATUS ">> FFMPEG Found: ${FFMPEG_VERSION}")
 message(STATUS ">> FFmpeg Include: ${FFMPEG_INCLUDE_DIRS}")
+message(STATUS ">> PortAudio Found: ${PORTAUDIO_VERSION}")
 include_directories(${FFMPEG_INCLUDE_DIRS})
 
 # 输出目录
