@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include <ncnn/mat.h>
+#include <mat.h>
 
 #include "model/model_loader.h"           // ModelRuntimeSnapshot
 #include "model/ncnn_input_adapter.h"     // NcnnWav2LipInput, ModelInputMetadata

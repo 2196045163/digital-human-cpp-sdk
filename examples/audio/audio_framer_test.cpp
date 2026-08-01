@@ -1,6 +1,6 @@
 /// @file    audio_framer_test.cpp
 /// @brief   AudioFramer 手动测试：合成 ramp + 真实音频文件 → 分帧 → 打印摘要
-/// @note    默认用 test_audio.wav，也可命令行指定其他音频文件
+/// @note    默认用 testdata/golden/audio.wav，也可命令行指定其他音频文件
 
 #include <cmath>       // std::round, M_PI
 #include <iostream>
@@ -122,7 +122,7 @@ int main(int argc, char* argv[]) {
     // ========================================================================
     // 5. 真实音频：AudioLoader → AudioFramer 完整流程
     // ========================================================================
-    std::string audio_path = (argc >= 2) ? argv[1] : "test_audio.wav";
+    std::string audio_path = (argc >= 2) ? argv[1] : "testdata/golden/audio.wav";
     std::cout << "[真实音频] AudioLoader → AudioFramer 流程\n";
     std::cout << "  文件: " << audio_path << "\n";
 

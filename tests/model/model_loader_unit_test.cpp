@@ -18,7 +18,7 @@
 #include "model/model_loader.h"
 
 #include <gtest/gtest.h>
-#include <ncnn/net.h>
+#include <net.h>
 #include <array>
 
 using namespace digital_human::model;

@@ -2,7 +2,7 @@
 
 #include <memory>
 #include <string>
-#include <ncnn/mat.h>
+#include <mat.h>
 
 #include "model/input_processor.h"   // Wav2LipInputData, ModelInputMetadata, ModelInputStatus
 

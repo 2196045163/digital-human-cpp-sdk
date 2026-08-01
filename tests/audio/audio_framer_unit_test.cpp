@@ -137,12 +137,14 @@ int main() {
               0, "empty PCM -> 0 frames");
 
     // 三种策略
-    int64_t L = 1600; int N = 400; int S = 160;
-    EXPECT_EQ(AudioFramer::ComputeNumFrames(L, N, S, AudioTailPolicy::kCoverLastSample),
+    int64_t sample_count = 1600;
+    int frame_size = 400;
+    int hop_size = 160;
+    EXPECT_EQ(AudioFramer::ComputeNumFrames(sample_count, frame_size, hop_size, AudioTailPolicy::kCoverLastSample),
               9, "CoverLast: (1600,400,160) = 9");
-    EXPECT_EQ(AudioFramer::ComputeNumFrames(L, N, S, AudioTailPolicy::kStartEveryHop),
+    EXPECT_EQ(AudioFramer::ComputeNumFrames(sample_count, frame_size, hop_size, AudioTailPolicy::kStartEveryHop),
               10, "StartEveryHop: (1600,400,160) = 10");
-    EXPECT_EQ(AudioFramer::ComputeNumFrames(L, N, S, AudioTailPolicy::kDropIncomplete),
+    EXPECT_EQ(AudioFramer::ComputeNumFrames(sample_count, frame_size, hop_size, AudioTailPolicy::kDropIncomplete),
               8, "DropIncomplete: (1600,400,160) = 8");
 
     // L < N 时 CoverLast 返回 1 帧（补零）

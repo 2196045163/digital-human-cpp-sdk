@@ -2,7 +2,7 @@
 /// @brief 演示 ModelLoader：加载模型、AcquireModel、旧模型保留、写 golden 产物
 
 #include "model/model_loader.h"
-#include <ncnn/net.h>
+#include <net.h>
 #include <cstdio>
 #include <fstream>
 #include <filesystem>

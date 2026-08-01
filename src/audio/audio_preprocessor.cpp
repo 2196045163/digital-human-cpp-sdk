@@ -8,6 +8,10 @@ namespace digital_human {
 namespace audio {
 
 namespace {
+    constexpr float kPcmMin = -1.0f;
+    constexpr float kPcmMax = 1.0f;
+    constexpr float kUnityGain = 1.0f;
+
     /// @brief 构造失败结果，避免错误路径中重复填充 success/status/error_message
     static AudioPreprocessResult MakeError(AudioPreprocessStatus status) {
         AudioPreprocessResult res;
@@ -25,22 +29,32 @@ namespace {
         float max_abs = 0.0f;
         for (auto v : pcm) {
             float av = std::abs(v);
-            if (av > max_abs) { max_abs = av; }
+            if (av > max_abs) {
+                max_abs = av;
+            }
         }
 
         // 静音保护：几乎没声音就不放大
-        if (max_abs < silence_epsilon) { return 1.0f; }
+        if (max_abs < silence_epsilon) {
+            return kUnityGain;
+        }
 
         // 算增益，受上限约束
         float gain = target_peak / max_abs;
-        if (gain > max_gain) { gain = max_gain; }
+        if (gain > max_gain) {
+            gain = max_gain;
+        }
 
         // 均匀放大 + clip 裁剪 [-1, 1]
         for (auto& v : pcm) {
             v *= gain;
             if (clamp_output) {
-                if (v > 1.0f)  { v = 1.0f; }
-                if (v < -1.0f) { v = -1.0f; }
+                if (v > kPcmMax) {
+                    v = kPcmMax;
+                }
+                if (v < kPcmMin) {
+                    v = kPcmMin;
+                }
             }
         }
         return gain;
@@ -257,14 +271,20 @@ AudioPreprocessResult AudioPreprocessor::ProcessFrame(const std::vector<float>& 
 
 std::vector<SpeechSegment> AudioPreprocessor::DetectSpeech(const std::vector<float>& pcm) const {
     std::vector<SpeechSegment> segments;
-    if (pcm.empty()) { return segments; }
+    if (pcm.empty()) {
+        return segments;
+    }
 
     const auto& opt = pImpl_->options;
     int frame_len = opt.sample_rate * opt.vad_frame_ms / 1000;
-    if (frame_len <= 0) { return segments; }
+    if (frame_len <= 0) {
+        return segments;
+    }
 
     int total_frames = static_cast<int>(pcm.size()) / frame_len;
-    if (total_frames <= 0) { return segments; }
+    if (total_frames <= 0) {
+        return segments;
+    }
 
     // 1. 逐帧算 RMS
     std::vector<float> frame_rms(total_frames);
@@ -288,7 +308,9 @@ std::vector<SpeechSegment> AudioPreprocessor::DetectSpeech(const std::vector<flo
     // 3. 逐帧判有/无语音
     std::vector<bool> is_speech(total_frames, false);
     for (int i = 0; i < total_frames; i++) {
-        if (frame_rms[i] > threshold) { is_speech[i] = true; }
+        if (frame_rms[i] > threshold) {
+            is_speech[i] = true;
+        }
     }
 
     // 4. Hangover：语音结束后多等几帧，短停顿不切断
@@ -336,7 +358,9 @@ AudioPreprocessStats AudioPreprocessor::ComputeStats(const std::vector<float>& p
     AudioPreprocessStats stats;
 
     // 空输入返回全零
-    if (pcm.empty()) { return stats; }
+    if (pcm.empty()) {
+        return stats;
+    }
 
     // 单次遍历 PCM，同时统计 min/max/RMS/零样本/NaN/Inf
     float min_val = pcm[0], max_val = pcm[0];
@@ -346,11 +370,21 @@ AudioPreprocessStats AudioPreprocessor::ComputeStats(const std::vector<float>& p
     bool has_nan = false, has_inf = false;
 
     for (auto v : pcm) {
-        if (v < min_val)   { min_val = v; }
-        if (v > max_val)   { max_val = v; }
-        if (v == 0.0f)     { zeros++; }
-        if (std::isnan(v)) { has_nan = true; }
-        if (std::isinf(v)) { has_inf = true; }
+        if (v < min_val) {
+            min_val = v;
+        }
+        if (v > max_val) {
+            max_val = v;
+        }
+        if (v == 0.0f) {
+            zeros++;
+        }
+        if (std::isnan(v)) {
+            has_nan = true;
+        }
+        if (std::isinf(v)) {
+            has_inf = true;
+        }
         sum_abs += std::abs(v);
         sum_sq  += static_cast<double>(v) * v;
     }

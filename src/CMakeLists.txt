@@ -36,4 +36,7 @@ target_link_libraries(digital_human_core PUBLIC
     dlib::dlib
 )
 
+# PortAudio is hidden behind PImpl and is not part of the public header ABI.
+target_link_libraries(digital_human_core PRIVATE PkgConfig::PORTAUDIO)
+
 message("OpenCV libraries: ${OpenCV_LIBS}")

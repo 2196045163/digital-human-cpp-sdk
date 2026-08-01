@@ -1,0 +1,12 @@
+{
+  "source": "deterministic_fake_audio_clock",
+  "sync_tolerance_us": 10000,
+  "decisions": [
+    {"audio_pts_us": 0, "action": "deliver", "selected_frame": 0, "dropped": 0, "queue_after": 3},
+    {"audio_pts_us": 50000, "action": "deliver", "selected_frame": 1, "dropped": 0, "queue_after": 2},
+    {"audio_pts_us": 100000, "action": "repeat_last", "selected_frame": 1, "dropped": 1, "queue_after": 1},
+    {"audio_pts_us": 120000, "action": "deliver", "selected_frame": 3, "dropped": 0, "queue_after": 0}
+  ],
+  "proves": "clock-to-scheduler contract",
+  "does_not_prove": "hardware playback timing"
+}
