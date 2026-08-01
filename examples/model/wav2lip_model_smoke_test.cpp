@@ -7,7 +7,7 @@
 #include "model/ncnn_input_adapter.h"
 
 #include <opencv2/core.hpp>
-#include <ncnn/net.h>
+#include <net.h>
 #include <cstdio>
 #include <cmath>
 #include <fstream>

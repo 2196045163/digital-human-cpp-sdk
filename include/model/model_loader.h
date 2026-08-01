@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 #include <filesystem>
-#include <ncnn/net.h>
+#include <net.h>
 
 namespace digital_human {
 namespace model {

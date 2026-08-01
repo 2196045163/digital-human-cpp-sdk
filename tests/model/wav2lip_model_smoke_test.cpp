@@ -22,7 +22,7 @@
 
 #include <gtest/gtest.h>
 #include <opencv2/core.hpp>
-#include <ncnn/net.h>
+#include <net.h>
 #include <cmath>
 
 using namespace digital_human::model;

@@ -27,7 +27,7 @@
 #include <gtest/gtest.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
-#include <ncnn/net.h>
+#include <net.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
