@@ -83,6 +83,30 @@ find_package(dlib REQUIRED)
 message(STATUS ">> dlib Found: ${dlib_VERSION}")
 include_directories(${dlib_INCLUDE_DIRS})
 
+# Threads（Pipeline 多线程支持）
+find_package(Threads REQUIRED)
+message(STATUS ">> Threads Found")
+
+# ASAN/TSAN 互斥选项
+option(ENABLE_ASAN "Enable AddressSanitizer (mutually exclusive with TSAN)" OFF)
+option(ENABLE_TSAN "Enable ThreadSanitizer (mutually exclusive with ASAN)" OFF)
+
+if(ENABLE_ASAN AND ENABLE_TSAN)
+    message(FATAL_ERROR "ASAN and TSAN are mutually exclusive. Enable only one.")
+endif()
+
+if(ENABLE_ASAN)
+    message(STATUS ">> ASAN enabled")
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif()
+
+if(ENABLE_TSAN)
+    message(STATUS ">> TSAN enabled")
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+endif()
+
 # CMakeLists 子目录 这些路径下再搞一个 CMakeLists，编译 SDK 的核心源码，比如生成一个库
 # 如 src/CMakeLists.txt 负责源码库；examples/CMakeLists.txt 负责示例程序
 add_subdirectory(src)

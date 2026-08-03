@@ -156,6 +156,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sync/audio_video_synchronous_test.cpp")
     target_link_libraries(audio_video_synchronous_test PRIVATE digital_human_core)
 endif()
 
+# 27. Pipeline Demo（完整 Pipeline 示例）
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/pipeline/digital_human_pipeline_demo.cpp")
+    add_executable(digital_human_pipeline_demo
+        pipeline/digital_human_pipeline_demo.cpp)
+    target_link_libraries(digital_human_pipeline_demo PRIVATE digital_human_core)
+endif()
+
 message(STATUS "Configured example targets: demo_app, opencv_test, "
         "ncnn_test, ffmpeg_audio_test, dlib_test, image_loader_test, "
         "face_detector_test, face_aligner_test, image_preprocessor_test, "

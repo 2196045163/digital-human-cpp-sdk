@@ -158,5 +158,56 @@ add_executable(model_visual_quality_diagnostic_ctest model/model_visual_quality_
 target_link_libraries(model_visual_quality_diagnostic_ctest PRIVATE digital_human_core GTest::GTest GTest::Main)
 gtest_discover_tests(model_visual_quality_diagnostic_ctest WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# ============================================================================
+# Pipeline 测试
+# ============================================================================
+
+# Pipeline 有界队列单元测试
+add_executable(bounded_task_queue_unit_test
+    pipeline/bounded_task_queue_unit_test.cpp)
+target_link_libraries(bounded_task_queue_unit_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_include_directories(bounded_task_queue_unit_test
+    PRIVATE ${PROJECT_SOURCE_DIR}/src)
+gtest_discover_tests(bounded_task_queue_unit_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "pipeline.queue.")
+
+# Pipeline 单元测试（确定性测试）
+add_executable(digital_human_pipeline_unit_test
+    pipeline/digital_human_pipeline_unit_test.cpp)
+target_link_libraries(digital_human_pipeline_unit_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_include_directories(digital_human_pipeline_unit_test
+    PRIVATE ${PROJECT_SOURCE_DIR}/src)
+gtest_discover_tests(digital_human_pipeline_unit_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "pipeline.unit."
+    PROPERTIES TIMEOUT 5)
+
+# Pipeline 生命周期测试
+add_executable(digital_human_pipeline_lifecycle_test
+    pipeline/digital_human_pipeline_lifecycle_test.cpp)
+target_link_libraries(digital_human_pipeline_lifecycle_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_include_directories(digital_human_pipeline_lifecycle_test
+    PRIVATE ${PROJECT_SOURCE_DIR}/src)
+gtest_discover_tests(digital_human_pipeline_lifecycle_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "pipeline.lifecycle."
+    PROPERTIES TIMEOUT 20)
+
+# Pipeline Golden E2E 测试（真实数据端到端）
+add_executable(digital_human_pipeline_golden_test
+    pipeline/digital_human_pipeline_golden_test.cpp)
+target_link_libraries(digital_human_pipeline_golden_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_include_directories(digital_human_pipeline_golden_test
+    PRIVATE ${PROJECT_SOURCE_DIR}/src)
+gtest_discover_tests(digital_human_pipeline_golden_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "pipeline.golden."
+    PROPERTIES TIMEOUT 120)
+
 # add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
 #          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

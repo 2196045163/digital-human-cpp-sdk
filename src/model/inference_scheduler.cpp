@@ -465,6 +465,11 @@ BatchInferenceResult InferenceScheduler::InferBatch(const std::vector<NcnnWav2Li
         if (enqueue_result.status == detail::BoundedEnqueueStatus::kTimedOut) {
             item.status = InferenceStatus::kQueueWaitTimeout;
             ++result.summary.queue_timeout_count;
+        } else if (enqueue_result.status == detail::BoundedEnqueueStatus::kFatalError) {
+            // pool 发生致命错误（worker 兜底 catch），不再接收任何任务
+            item.status = InferenceStatus::kUnknownError;
+            item.error_message = "BoundedWorkerPool 致命错误：worker 出现无法传播到 future 的异常";
+            ++result.summary.stopping_rejected_count;
         } else {
             // 并发 Stop 已让 pool 停止接收；该任务从未进入队列，不属于待排空任务。
             item.status = InferenceStatus::kEngineStopping;
