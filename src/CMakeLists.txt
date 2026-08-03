@@ -6,6 +6,7 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/core/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/utils/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/model/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/*.cpp
 )
 
 # 若尚无源文件，编译一个占位文件避免 CMake 报错
@@ -38,5 +39,8 @@ target_link_libraries(digital_human_core PUBLIC
 
 # PortAudio is hidden behind PImpl and is not part of the public header ABI.
 target_link_libraries(digital_human_core PRIVATE PkgConfig::PORTAUDIO)
+
+# Pipeline 多线程支持
+target_link_libraries(digital_human_core PRIVATE Threads::Threads)
 
 message("OpenCV libraries: ${OpenCV_LIBS}")
