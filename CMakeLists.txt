@@ -124,6 +124,10 @@ else()
     message(STATUS ">> Examples disabled (BUILD_EXAMPLES=OFF)")
 endif()
 
+# M05 性能基准（独立于 examples，始终构建）
+add_subdirectory(benchmarks)
+message(STATUS ">> Benchmarks enabled")
+
 # 测试支持
 if(BUILD_TESTS)
     find_package(GTest REQUIRED)
