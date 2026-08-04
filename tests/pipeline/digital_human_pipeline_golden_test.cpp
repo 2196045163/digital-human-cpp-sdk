@@ -224,7 +224,7 @@ TEST(PipelineGoldenTest, FullOfflinePipeline75Frames) {
 
     // 等待正常 EOS 完成（最长 300s），不通过 RequestStop 提前结束
     constexpr auto kEosTimeout = std::chrono::seconds(300);
-    sink->WaitForTerminal(std::chrono::chrono::milliseconds(kEosTimeout));
+    sink->WaitForTerminal(kEosTimeout);
 
     // 获取最终统计
     auto result = pipeline.GetStats();

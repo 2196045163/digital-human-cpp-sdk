@@ -687,10 +687,12 @@ PipelineResult DigitalHumanPipeline::StatsToResult() const {
     {
         std::lock_guard<std::mutex> state_lock(pImpl_->shared_.state_mutex);
         current = pImpl_->shared_.state;
-        result.stats = pImpl_->shared_.stats;
-        result.stats.state = current;
-        result.stats.termination = pImpl_->shared_.stats.termination;
     }
+    {
+        std::lock_guard<std::mutex> stats_lock(pImpl_->shared_.stats_mutex);
+        result.stats = pImpl_->shared_.stats;
+    }
+    result.stats.state = current;
 
     result.success = (current == PipelineState::kSucceeded);
     result.terminal_state = current;
