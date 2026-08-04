@@ -261,5 +261,23 @@ gtest_discover_tests(digital_human_cli_contract_test
     TEST_PREFIX "cli.contract."
     PROPERTIES TIMEOUT 180)
 
+# ============================================================================
+# M04 E2E 验收测试
+# ============================================================================
+
+# E2E acceptance tests: full user path CLI → MP4 with Golden inputs,
+# ffprobe validation, artifact consistency, failure injection, stability.
+add_executable(digital_human_e2e_acceptance_test
+    e2e/digital_human_e2e_acceptance_test.cpp)
+target_link_libraries(digital_human_e2e_acceptance_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_compile_definitions(digital_human_e2e_acceptance_test PRIVATE
+    CLI_BINARY_DIR="${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+    PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+gtest_discover_tests(digital_human_e2e_acceptance_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "e2e.acceptance."
+    PROPERTIES TIMEOUT 300)
+
 # add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
 #          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
