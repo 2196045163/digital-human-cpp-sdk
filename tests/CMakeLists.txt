@@ -243,5 +243,23 @@ gtest_discover_tests(final_media_writer_failure_test
     TEST_PREFIX "final_media_writer.failure."
     PROPERTIES TIMEOUT 60)
 
+# ============================================================================
+# M03 CLI 契约测试
+# ============================================================================
+
+# CLI contract tests: --help, unknown args, missing inputs, realtime rejection,
+# integration smoke with golden data, JSON schema validation.
+add_executable(digital_human_cli_contract_test
+    cli/digital_human_cli_contract_test.cpp)
+target_link_libraries(digital_human_cli_contract_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_compile_definitions(digital_human_cli_contract_test PRIVATE
+    CLI_BINARY_DIR="${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+    PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+gtest_discover_tests(digital_human_cli_contract_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "cli.contract."
+    PROPERTIES TIMEOUT 180)
+
 # add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
 #          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

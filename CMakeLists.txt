@@ -115,6 +115,7 @@ endif()
 # CMakeLists 子目录 这些路径下再搞一个 CMakeLists，编译 SDK 的核心源码，比如生成一个库
 # 如 src/CMakeLists.txt 负责源码库；examples/CMakeLists.txt 负责示例程序
 add_subdirectory(src)
+add_subdirectory(apps)
 
 if(BUILD_EXAMPLES)
     add_subdirectory(examples)
