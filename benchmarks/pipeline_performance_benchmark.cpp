@@ -51,6 +51,7 @@ namespace {
 const fs::path kGoldenImagePath = "testdata/golden/face.jpg";
 const fs::path kGoldenAudioPath = "testdata/golden/audio.wav";
 const fs::path kModelParamPath = "models/wav2lip/wav2lip.param";
+const fs::path kModelBinPath = "models/wav2lip/wav2lip.bin";
 const fs::path kLandmarkModelPath = "models/shape_predictor_68_face_landmarks.dat";
 constexpr int kDefaultIterations = 3;
 constexpr std::size_t kRssPollIntervalMs = 100;
@@ -433,6 +434,10 @@ std::string BuildBenchmarkJson(const std::vector<PerRunRecord>& runs) {
          << JsonEscape(kModelParamPath.string()) << "\",\n";
     json << "    \"model_param_sha256\": \""
          << ComputeSha256(kModelParamPath) << "\",\n";
+    json << "    \"model_bin_path\": \""
+         << JsonEscape(kModelBinPath.string()) << "\",\n";
+    json << "    \"model_bin_sha256\": \""
+         << ComputeSha256(kModelBinPath) << "\",\n";
     json << "    \"landmark_model_path\": \""
          << JsonEscape(kLandmarkModelPath.string()) << "\",\n";
     json << "    \"landmark_model_sha256\": \""
@@ -498,7 +503,16 @@ std::string BuildBenchmarkJson(const std::vector<PerRunRecord>& runs) {
     json << "    \"Golden inputs verify correctness; benchmark "
             "captures timing and resource evidence\",\n";
     json << "    \"No business algorithm, Pipeline thread/queue "
-            "parameters, or models were modified for benchmarking\"\n";
+            "parameters, or models were modified for benchmarking\",\n";
+    json << "    \"Stage timers not populated by Pipeline implementation: "
+            "audio_process_time_ms, inference_total_time_ms, "
+            "render_total_time_ms — declared as 未测量. "
+            "Only prepare_time_ms is instrumented in "
+            "src/pipeline/digital_human_pipeline.cpp:341. "
+            "The other three stages run inside worker threads without "
+            "per-stage wall-clock accumulation in PipelineStats\",\n";
+    json << "    \"wav2lip.bin SHA256 collected for full model "
+            "traceability; model bin is ~138 MB ncnn weights file\"\n";
     json << "  ]\n";
     json << "}\n";
     return json.str();
@@ -600,7 +614,7 @@ int main(int argc, char* argv[]) {
 
     // 检查输入
     for (const auto& p : {kGoldenImagePath, kGoldenAudioPath,
-                          kModelParamPath, kLandmarkModelPath}) {
+                          kModelParamPath, kModelBinPath, kLandmarkModelPath}) {
         if (!fs::exists(p)) {
             std::cerr << "Error: file not found: " << p << "\n";
             return 1;
