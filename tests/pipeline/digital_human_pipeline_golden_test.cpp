@@ -222,33 +222,15 @@ TEST(PipelineGoldenTest, FullOfflinePipeline75Frames) {
     ASSERT_TRUE(start_result.success)
         << "Pipeline Start failed: " << start_result.error_message;
 
-    // 轮询等待所有帧到达，最长 120s
-    constexpr auto kFrameTimeout = std::chrono::seconds(120);
-    const auto deadline = std::chrono::steady_clock::now() + kFrameTimeout;
-    while (sink->frame_count() < 75
-           && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
-    // 请求停止（非阻塞），取消队列唤醒工作线程
-    pipeline.RequestStop();
-
-    // 短暂等待 OnTerminal（可能在 RequestStop 触发的取消路径中交付）
-    sink->WaitForTerminal(std::chrono::milliseconds(5000));
+    // 等待正常 EOS 完成（最长 300s），不通过 RequestStop 提前结束
+    constexpr auto kEosTimeout = std::chrono::seconds(300);
+    sink->WaitForTerminal(std::chrono::chrono::milliseconds(kEosTimeout));
 
     // 获取最终统计
     auto result = pipeline.GetStats();
-    PipelineResult terminal;
-    if (sink->terminal_called()) {
-        terminal = sink->terminal_result();
-    } else {
-        terminal.success = (sink->frame_count() == 75);
-        terminal.terminal_state = PipelineState::kCancelled;
-        terminal.stats = result;
-    }
-
-    // 后台 join（不阻塞测试断言；ncnn 推理不可中断，Stop 可能很慢）
-    // 析构时会处理线程 join
+    ASSERT_TRUE(sink->terminal_called())
+        << "OnTerminal was not called within " << kEosTimeout.count() << "s timeout";
+    PipelineResult terminal = sink->terminal_result();
 
     auto end_time = std::chrono::steady_clock::now();
     auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -260,14 +242,13 @@ TEST(PipelineGoldenTest, FullOfflinePipeline75Frames) {
 
     int frame_count = sink->frame_count();
 
-    // P1-3 修复：3s 音频 @ 25fps 必须恰好 75 帧
+    // 3s 音频 @ 25fps 必须恰好 75 帧
     EXPECT_EQ(frame_count, 75) << "Expected exactly 75 frames for 3s audio at 25fps, got " << frame_count;
 
-    // Pipeline 状态：RequestStop 后应为 Cancelled 或 Draining
-    EXPECT_TRUE(result.state == PipelineState::kSucceeded
-                || result.state == PipelineState::kCancelled
-                || result.state == PipelineState::kDraining)
-        << "State: " << PipelineStateToString(result.state);
+    // 正常 EOS 必须到达 kSucceeded，不得接受 kCancelled 或 kDraining
+    EXPECT_EQ(terminal.terminal_state, PipelineState::kSucceeded)
+        << "Terminal state must be kSucceeded for normal EOS, got: "
+        << PipelineStateToString(terminal.terminal_state);
 
     // 4. 没有丢帧（离线模式）
     EXPECT_EQ(result.dropped_late_count, 0);
