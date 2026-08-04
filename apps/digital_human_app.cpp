@@ -64,6 +64,12 @@ struct CliResult {
     pipeline::PipelineStats stats;
     std::string error_code;
     std::string error_message;
+    // Writer / 输出文件诊断（仅失败时填充）
+    bool has_writer_diagnostics = false;
+    std::string writer_error;
+    bool writer_finalized = false;
+    bool file_exists = false;
+    int64_t file_size = 0;
 };
 
 /// @brief 将 CliResult 输出为 pretty-printed JSON 到 stdout
@@ -101,10 +107,27 @@ void EmitJson(const CliResult& r) {
         std::printf("  \"stats\": null,\n");
     }
 
-    if (!r.error_code.empty() || !r.error_message.empty()) {
+    if (!r.error_code.empty() || !r.error_message.empty() || r.has_writer_diagnostics) {
         std::printf("  \"error\": {\n");
         std::printf("    \"code\": \"%s\",\n", JsonEscape(r.error_code).c_str());
-        std::printf("    \"message\": \"%s\"\n", JsonEscape(r.error_message).c_str());
+        std::printf("    \"message\": \"%s\"", JsonEscape(r.error_message).c_str());
+        if (r.has_writer_diagnostics) {
+            std::printf(",\n");
+            std::printf("    \"writer_error\": \"%s\",\n",
+                        JsonEscape(r.writer_error).c_str());
+            std::printf("    \"writer_finalized\": %s,\n",
+                        r.writer_finalized ? "true" : "false");
+            std::printf("    \"file_exists\": %s,\n",
+                        r.file_exists ? "true" : "false");
+            if (r.file_exists) {
+                std::printf("    \"file_size\": %ld\n",
+                            static_cast<long>(r.file_size));
+            } else {
+                std::printf("    \"file_size\": null\n");
+            }
+        } else {
+            std::printf("\n");
+        }
         std::printf("  }\n");
     } else {
         std::printf("  \"error\": null\n");
@@ -394,7 +417,21 @@ int main(int argc, char* argv[]) {
     double total_duration_ms =
         std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
-    // ---- 11. 组装 JSON 结果 ----
+    // ---- 11. 校验 writer 终态与输出文件 ----
+    const output::WriterError writer_err = writer->GetLastError();
+    const bool writer_finalized = writer->IsFinalized();
+    const bool writer_ok = (writer_err == output::WriterError::kOk) && writer_finalized;
+
+    const bool file_exists = fs::exists(args.output_path);
+    int64_t file_size = 0;
+    if (file_exists) {
+        std::error_code ec;
+        file_size = static_cast<int64_t>(fs::file_size(args.output_path, ec));
+        if (ec) file_size = 0;
+    }
+    const bool file_ok = file_exists && file_size > 0;
+
+    // ---- 12. 组装 JSON 结果 ----
     CliResult r;
     r.output_path = fs::absolute(args.output_path).string();
     r.frame_count = writer->GetWrittenFrameCount();
@@ -402,7 +439,8 @@ int main(int argc, char* argv[]) {
     r.has_stats = true;
     r.stats = wait_result.stats;
 
-    if (wait_result.success) {
+    // 仅当 pipeline 成功且 writer 已 Finalize、无错误、输出文件存在且非空时才算成功
+    if (wait_result.success && writer_ok && file_ok) {
         r.exit_code = 0;
         r.status = "success";
         // error_code / error_message 留空 → JSON error: null
@@ -411,6 +449,29 @@ int main(int argc, char* argv[]) {
         r.status = "error";
         r.error_code = pipeline::PipelineErrorCodeToString(wait_result.error_code);
         r.error_message = wait_result.error_message;
+        if (wait_result.success) {
+            // pipeline 本身成功但产物无效：定位具体失败点
+            r.error_code = "WriterOutputInvalid";
+            if (writer_err != output::WriterError::kOk) {
+                r.error_message = "FinalMediaWriter failed: "
+                                  + writer->GetLastErrorMessage();
+            } else if (!writer_finalized) {
+                r.error_message = "FinalMediaWriter not finalized after "
+                                  "pipeline.Wait(): " + args.output_path;
+            } else if (!file_exists) {
+                r.error_message = "Output file missing after pipeline: "
+                                  + args.output_path;
+            } else {
+                r.error_message = "Output file is empty after pipeline: "
+                                  + args.output_path;
+            }
+        }
+        // 失败时附带 writer / 输出文件诊断信息
+        r.has_writer_diagnostics = true;
+        r.writer_error = writer->GetLastErrorMessage();
+        r.writer_finalized = writer_finalized;
+        r.file_exists = file_exists;
+        r.file_size = file_size;
     }
 
     EmitJson(r);
