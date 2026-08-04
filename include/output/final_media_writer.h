@@ -130,12 +130,45 @@ struct WriterConfig {
 };
 
 // ============================================================================
+// MediaWriter — 写出器抽象接口（依赖注入点）
+// ============================================================================
+
+/// @brief 最终媒体写出器抽象接口。
+///
+/// 生产实现为 FinalMediaWriter；测试可注入 Fake 实现，以在不依赖 FFmpeg 的
+/// 前提下注入编码/mux/flush/trailer 失败、未 Finalize、输出文件缺失/空文件
+/// 等故障（见 tests/cli/cli_failure_injection_test.cpp）。
+///
+/// 该接口同时继承 PipelineOutputSink，因此可直接作为 Pipeline Sink 注入。
+/// CLI 对写出器的所有查询（IsFinalized / GetLastError / ...）都经由该接口，
+/// 从而在测试中替换为可配置失败的替身。
+class MediaWriter : public pipeline::PipelineOutputSink {
+public:
+    ~MediaWriter() override = default;
+
+    /// @brief 是否已 Finalize（flush + trailer 已完成，资源已释放）
+    virtual bool IsFinalized() const = 0;
+
+    /// @brief 最后一次错误码
+    virtual WriterError GetLastError() const = 0;
+
+    /// @brief 最后一次错误描述
+    virtual std::string GetLastErrorMessage() const = 0;
+
+    /// @brief 已写入的视频帧数（不含 flush 帧）
+    virtual int64_t GetWrittenFrameCount() const = 0;
+
+    /// @brief 输出文件路径
+    virtual const std::string& GetOutputPath() const = 0;
+};
+
+// ============================================================================
 // FinalMediaWriter — 最终媒体写出器
 // ============================================================================
 
 /// @brief 离线 MP4 写出器，基于 FFmpeg C API 实现。
 ///
-/// 实现 PipelineOutputSink 接口，将 Pipeline 输出的 BGR 视频帧
+/// 实现 MediaWriter / PipelineOutputSink 接口，将 Pipeline 输出的 BGR 视频帧
 /// 与输入音频按明确 time base 编码和封装为 MP4 文件。
 ///
 /// @par 线程/回调限制
@@ -162,7 +195,7 @@ struct WriterConfig {
 /// auto writer = std::make_shared<FinalMediaWriter>(cfg);
 /// pipeline->Start(face_img, writer);
 /// @endcode
-class FinalMediaWriter : public pipeline::PipelineOutputSink {
+class FinalMediaWriter : public MediaWriter {
 public:
     /// @brief 构造写出器，验证配置但不打开文件。
     /// @param config 写出器配置（output_path 必填）
@@ -208,19 +241,19 @@ public:
     bool IsOpen() const;
 
     /// @brief 是否已 Finalize（trailer 已写，资源已释放）
-    bool IsFinalized() const;
+    bool IsFinalized() const override;
 
     /// @brief 已写入的视频帧数（不含 flush 帧）
-    int64_t GetWrittenFrameCount() const;
+    int64_t GetWrittenFrameCount() const override;
 
     /// @brief 最后一次错误码
-    WriterError GetLastError() const;
+    WriterError GetLastError() const override;
 
     /// @brief 最后一次错误描述
-    std::string GetLastErrorMessage() const;
+    std::string GetLastErrorMessage() const override;
 
     /// @brief 输出文件路径
-    const std::string& GetOutputPath() const;
+    const std::string& GetOutputPath() const override;
 
 private:
     struct Impl;                       ///< PImpl，隐藏 FFmpeg 头文件

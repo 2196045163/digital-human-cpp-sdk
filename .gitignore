@@ -5,6 +5,7 @@
 *.o
 *.obj
 build/
+build-*/
 out/
 .vscode/
 .DS_Store

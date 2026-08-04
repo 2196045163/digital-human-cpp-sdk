@@ -267,6 +267,26 @@ gtest_discover_tests(digital_human_cli_contract_test
     TEST_PREFIX "cli.contract."
     PROPERTIES TIMEOUT 360)
 
+# CLI 失败注入测试：以 Fake MediaWriter（实现 output::MediaWriter 接口）注入
+# RunCli，在真实 Pipeline 跑完的前提下验证四条件成功校验的逐项失败路径：
+# 编码/mux/flush/trailer 失败、未 Finalize、输出文件缺失/空文件。
+# 复用 digital_human_app.cpp（以 DIGITAL_HUMAN_APP_NO_MAIN 宏编译，仅取 RunCli）。
+add_executable(cli_failure_injection_test
+    cli/cli_failure_injection_test.cpp
+    ${PROJECT_SOURCE_DIR}/apps/digital_human_app.cpp)
+target_link_libraries(cli_failure_injection_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+target_include_directories(cli_failure_injection_test
+    PRIVATE ${PROJECT_SOURCE_DIR}/apps)
+target_compile_definitions(cli_failure_injection_test PRIVATE
+    DIGITAL_HUMAN_APP_NO_MAIN=1)
+# TIMEOUT 300 的原因：每个用例都完整跑一遍 Golden 推理 + 编码（Release 下
+# 单次约 5-10s，Debug 下实测约 9s），7 个用例叠加留足余量，同时仍能暴露挂起。
+gtest_discover_tests(cli_failure_injection_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "cli.failure_injection."
+    PROPERTIES TIMEOUT 300)
+
 # ============================================================================
 # M04 E2E 验收测试
 # ============================================================================

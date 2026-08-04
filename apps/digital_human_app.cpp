@@ -17,12 +17,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "audio/audio_loader.h"
+#include "digital_human_cli.h"
 #include "output/final_media_writer.h"
 #include "pipeline/digital_human_pipeline.h"
 #include "pipeline/pipeline_types.h"
@@ -250,11 +252,11 @@ static std::string ValidateArgs(const ParsedArgs& args) {
 }
 
 // ============================================================================
-// main
+// RunCli（生产 main 委托；测试注入 Fake writer 工厂）
 // ============================================================================
 
 // ----------------------------------------------------------------------------
-// main：CLI 编排入口。
+// RunCli：CLI 编排主体（main 委托给它；测试注入 Fake writer 工厂调用）。
 //
 // 成功判定是"四条件联合"（第 11-12 步），全部满足才 exit 0 / status success：
 //   1) pipeline.Wait() 返回 success（Pipeline 终态 kSucceeded）
@@ -281,7 +283,17 @@ static std::string ValidateArgs(const ParsedArgs& args) {
 //   例如 writer 编码失败 vs 未 Finalize vs 文件缺失 vs 空文件。
 // ----------------------------------------------------------------------------
 
-int main(int argc, char* argv[]) {
+namespace digital_human {
+namespace cli {
+
+/// @brief 默认工厂：创建生产 FinalMediaWriter（见 digital_human_cli.h）
+MediaWriterFactory DefaultMediaWriterFactory() {
+    return [](const output::WriterConfig& cfg) {
+        return std::make_shared<output::FinalMediaWriter>(cfg);
+    };
+}
+
+int RunCli(int argc, char* argv[], const MediaWriterFactory& writer_factory) {
     // ---- 1. 解析参数 ----
     auto args = ParseArgs(argc, argv);
 
@@ -399,9 +411,9 @@ int main(int argc, char* argv[]) {
     writer_cfg.fps_den = 1;
     writer_cfg.audio = audio_result.audio;  // PCM 直接传给 writer 编码
 
-    std::shared_ptr<output::FinalMediaWriter> writer;
+    std::shared_ptr<output::MediaWriter> writer;
     try {
-        writer = std::make_shared<output::FinalMediaWriter>(writer_cfg);
+        writer = writer_factory(writer_cfg);
     } catch (const std::exception& e) {
         CliResult r;
         r.exit_code = 1;
@@ -505,3 +517,19 @@ int main(int argc, char* argv[]) {
     EmitJson(r);
     return r.exit_code;
 }
+
+}  // namespace cli
+}  // namespace digital_human
+
+// ============================================================================
+// main：生产入口（仅委托 RunCli + 默认工厂）
+// ============================================================================
+//
+// DIGITAL_HUMAN_APP_NO_MAIN：测试目标（tests/cli/cli_failure_injection_test）
+// 以该宏编译本文件，仅使用 RunCli 并以 Fake writer 工厂注入失败场景。
+#ifndef DIGITAL_HUMAN_APP_NO_MAIN
+int main(int argc, char* argv[]) {
+    return digital_human::cli::RunCli(argc, argv,
+                                      digital_human::cli::DefaultMediaWriterFactory());
+}
+#endif
