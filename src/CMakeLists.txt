@@ -7,6 +7,7 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/utils/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/model/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/output/*.cpp
 )
 
 # 若尚无源文件，编译一个占位文件避免 CMake 报错

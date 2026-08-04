@@ -209,5 +209,39 @@ gtest_discover_tests(digital_human_pipeline_golden_test
     TEST_PREFIX "pipeline.golden."
     PROPERTIES TIMEOUT 120)
 
+# ============================================================================
+# FinalMediaWriter 测试
+# ============================================================================
+
+# Unit tests: synthetic frames/PCM, timebase, PTS, flush, error codes
+add_executable(final_media_writer_unit_test
+    output/final_media_writer_unit_test.cpp)
+target_link_libraries(final_media_writer_unit_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(final_media_writer_unit_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "final_media_writer.unit."
+    PROPERTIES TIMEOUT 30)
+
+# Integration tests: real audio + 75 frames, ffprobe dual stream, frame count, duration
+add_executable(final_media_writer_integration_test
+    output/final_media_writer_integration_test.cpp)
+target_link_libraries(final_media_writer_integration_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(final_media_writer_integration_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "final_media_writer.integration."
+    PROPERTIES TIMEOUT 60)
+
+# Failure injection tests: invalid path, mid-failure, cancellation, idempotence
+add_executable(final_media_writer_failure_test
+    output/final_media_writer_failure_test.cpp)
+target_link_libraries(final_media_writer_failure_test
+    PRIVATE digital_human_core GTest::GTest GTest::Main)
+gtest_discover_tests(final_media_writer_failure_test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    TEST_PREFIX "final_media_writer.failure."
+    PROPERTIES TIMEOUT 60)
+
 # add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
 #          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
