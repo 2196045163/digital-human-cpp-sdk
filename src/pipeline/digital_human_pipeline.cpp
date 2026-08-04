@@ -763,13 +763,16 @@ void DigitalHumanPipeline::CheckTerminalAndNotify() {
 
     if (!is_terminal) {
         // 记录为何未交付（用于诊断）
-        shared.stats.terminal_diagnostics =
-            std::string("not_terminal: current=") + PipelineStateToString(current)
-            + " q2_drained=" + (q2_drained ? "true" : "false")
-            + " term=" + (term == PipelineTermination::kNormalEos ? "EOS" :
-                          term == PipelineTermination::kUserCancel ? "Cancel" :
-                          term == PipelineTermination::kInternalError ? "Error" : "None");
-        shared.terminal_delivered.store(false, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> stats_lock(shared.stats_mutex);
+            shared.stats.terminal_diagnostics =
+                std::string("not_terminal: current=") + PipelineStateToString(current)
+                + " q2_drained=" + (q2_drained ? "true" : "false")
+                + " term=" + (term == PipelineTermination::kNormalEos ? "EOS" :
+                              term == PipelineTermination::kUserCancel ? "Cancel" :
+                              term == PipelineTermination::kInternalError ? "Error" : "None");
+            shared.terminal_delivered.store(false, std::memory_order_release);
+        }
         return;
     }
 
@@ -778,10 +781,17 @@ void DigitalHumanPipeline::CheckTerminalAndNotify() {
     // 回调 OnTerminal（在锁外）
     auto sink = shared.sink;
     if (sink) {
+        // 在 stats_mutex 下取一致性快照，OnTerminal 调用期间不持有任何锁
+        PipelineStats stats_snapshot;
+        {
+            std::lock_guard<std::mutex> stats_lock(shared.stats_mutex);
+            stats_snapshot = shared.stats;
+        }
+
         PipelineResult term_result;
         term_result.success = (final_state == PipelineState::kSucceeded);
         term_result.terminal_state = final_state;
-        term_result.stats = shared.stats;
+        term_result.stats = stats_snapshot;
         term_result.stats.state = final_state;
         term_result.stats.termination = term;
 
@@ -801,12 +811,16 @@ void DigitalHumanPipeline::CheckTerminalAndNotify() {
         try {
             sink->OnTerminal(term_result);
         } catch (...) {
+            std::lock_guard<std::mutex> stats_lock(shared.stats_mutex);
             shared.stats.secondary_diagnostics = "OnTerminal 回调异常（已忽略）";
         }
     }
 
-    shared.stats.state = final_state;
-    shared.stats.termination = term;
+    {
+        std::lock_guard<std::mutex> stats_lock(shared.stats_mutex);
+        shared.stats.state = final_state;
+        shared.stats.termination = term;
+    }
     shared.cleanup_complete.store(true, std::memory_order_release);
     SetSharedState(shared, final_state);
 
@@ -1156,13 +1170,16 @@ PipelineResult DigitalHumanPipeline::RequestStop() {
     }
 
     // 统计被取消的未处理任务
-    if (pImpl_->shared_.q1) {
-        pImpl_->shared_.stats.cancelled_discarded_count +=
-            static_cast<std::int64_t>(pImpl_->shared_.q1->UnprocessedCount());
-    }
-    if (pImpl_->shared_.q2) {
-        pImpl_->shared_.stats.cancelled_discarded_count +=
-            static_cast<std::int64_t>(pImpl_->shared_.q2->UnprocessedCount());
+    {
+        std::lock_guard<std::mutex> stats_lock(pImpl_->shared_.stats_mutex);
+        if (pImpl_->shared_.q1) {
+            pImpl_->shared_.stats.cancelled_discarded_count +=
+                static_cast<std::int64_t>(pImpl_->shared_.q1->UnprocessedCount());
+        }
+        if (pImpl_->shared_.q2) {
+            pImpl_->shared_.stats.cancelled_discarded_count +=
+                static_cast<std::int64_t>(pImpl_->shared_.q2->UnprocessedCount());
+        }
     }
 
     // 通知等待者
