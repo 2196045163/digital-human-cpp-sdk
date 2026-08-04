@@ -700,11 +700,14 @@ void FinalMediaWriter::OnFrame(const pipeline::PipelineFrame& frame) {
     impl_->next_video_pts = pts_in_tb + 1;
 }
 
-void FinalMediaWriter::OnTerminal(const pipeline::PipelineResult& /*result*/) {
+void FinalMediaWriter::OnTerminal(const pipeline::PipelineResult& result) {
     if (impl_->finalized) return; // 幂等
 
-    // 即使之前有错误，也执行清理但不写 trailer（避免半成品文件）
-    if (impl_->last_error != WriterError::kOk || !impl_->header_written) {
+    // Pipeline 未正常完成（取消/失败/排空等），或 writer 自身出错，
+    // 或从未成功打开输出：清理资源并移除半成品文件，不写 trailer。
+    if (result.terminal_state != pipeline::PipelineState::kSucceeded
+        || impl_->last_error != WriterError::kOk
+        || !impl_->header_written) {
         impl_->Cleanup();
         impl_->finalized = true;
         if (!impl_->config.output_path.empty()) {
@@ -713,6 +716,8 @@ void FinalMediaWriter::OnTerminal(const pipeline::PipelineResult& /*result*/) {
         return;
     }
 
+    // 仅当 Pipeline 成功完成、writer 无错误且 header 已写入时才 Finalize
+    // （flush + trailer），确保输出文件完整可解析。
     impl_->Finalize();
 }
 

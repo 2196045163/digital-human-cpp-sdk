@@ -158,6 +158,7 @@ TEST_F(FinalMediaWriterTest, BasicWriteNoAudio) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(writer->IsFinalized());
@@ -188,6 +189,7 @@ TEST_F(FinalMediaWriterTest, BasicWriteWithAudio) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(writer->IsFinalized());
@@ -231,6 +233,7 @@ TEST_F(FinalMediaWriterTest, FrameCountExact) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_EQ(writer->GetWrittenFrameCount(), kNumFrames);
@@ -272,6 +275,7 @@ TEST_F(FinalMediaWriterTest, FrameRateCorrect) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     // 验证时长：25 帧 @ 25fps = 1.0 秒
@@ -302,6 +306,7 @@ TEST_F(FinalMediaWriterTest, NoFramesDirectTerminal) {
     // 直接 OnTerminal，无 OnFrame
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(writer->IsFinalized());
@@ -330,6 +335,7 @@ TEST_F(FinalMediaWriterTest, EmptyFrameSkipped) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
     EXPECT_TRUE(writer->IsFinalized());
 }
@@ -357,6 +363,7 @@ TEST_F(FinalMediaWriterTest, DimensionChangeDetected) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 }
 
@@ -376,6 +383,7 @@ TEST_F(FinalMediaWriterTest, DoubleFinalizeIdempotent) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
 
     writer->OnTerminal(result);
     EXPECT_TRUE(writer->IsFinalized());
@@ -464,6 +472,7 @@ TEST_F(FinalMediaWriterTest, PtsMonotonic) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(writer->IsFinalized());
@@ -518,6 +527,7 @@ TEST_F(FinalMediaWriterTest, CustomFrameRate) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(FileExists(tmp_path_));
@@ -544,6 +554,9 @@ TEST_F(FinalMediaWriterTest, OddDimensions) {
     // 可能失败也可能成功，取决于编码器；至少不能崩溃
     pipeline::PipelineResult result;
     result.success = writer->GetLastError() == WriterError::kOk;
+    result.terminal_state = writer->GetLastError() == WriterError::kOk
+        ? pipeline::PipelineState::kSucceeded
+        : pipeline::PipelineState::kFailed;
     writer->OnTerminal(result);
 }
 
@@ -578,6 +591,7 @@ TEST_F(FinalMediaWriterTest, QueryAfterFirstFrame) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_FALSE(writer->IsOpen());
@@ -600,6 +614,7 @@ TEST_F(FinalMediaWriterTest, AudioOnlyNoVideoFrames) {
     // 不发任何视频帧，直接 Terminate
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     // 无视频流不应创建文件

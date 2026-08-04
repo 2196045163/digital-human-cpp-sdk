@@ -144,6 +144,7 @@ TEST_F(FinalMediaWriterIntegrationTest, RealAudio75FramesFfprobe) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(writer->IsFinalized());
@@ -240,6 +241,7 @@ TEST_F(FinalMediaWriterIntegrationTest, GoldenExactAssertions) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     // 精确帧数
@@ -308,6 +310,7 @@ TEST_F(FinalMediaWriterIntegrationTest, AutoDetectDimensionsFromFirstFrame) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(FileExists(tmp_path_));
@@ -344,6 +347,7 @@ TEST_F(FinalMediaWriterIntegrationTest, H264Encoding) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(FileExists(tmp_path_));
@@ -392,6 +396,7 @@ TEST_F(FinalMediaWriterIntegrationTest, StabilityThreeRounds) {
 
         pipeline::PipelineResult result;
         result.success = true;
+        result.terminal_state = pipeline::PipelineState::kSucceeded;
         writer->OnTerminal(result);
 
         EXPECT_TRUE(writer->IsFinalized());

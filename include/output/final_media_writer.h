@@ -194,7 +194,9 @@ public:
     /// 执行：flush 视频编码器 → 编码全部音频 PCM → flush 音频编码器 →
     /// 写文件 trailer → 关闭并释放所有 FFmpeg 资源。
     ///
-    /// 若任何步骤失败，移除输出文件（不留下半成品）。
+    /// 仅当 result.terminal_state == kSucceeded、writer 无内部错误且
+    /// header 已写入时才执行 Finalize；否则（Pipeline 取消/失败/排空，
+    /// 或 writer 出错）清理资源并移除输出文件，不留下半成品。
     /// 若已 Finalize 过，静默返回（幂等）。
     ///
     /// @param result Pipeline 终止结果

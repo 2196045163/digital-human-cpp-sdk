@@ -189,6 +189,7 @@ TEST_F(FinalMediaWriterFailureTest, RepeatedOnFrameAfterTerminal) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     // 再次 OnFrame 应为 no-op
@@ -212,6 +213,7 @@ TEST_F(FinalMediaWriterFailureTest, ThreeFinalizations) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
 
     // 三次 OnTerminal
     writer->OnTerminal(result);
@@ -252,6 +254,7 @@ TEST_F(FinalMediaWriterFailureTest, ErrorDuringEncoding) {
         // 即使 open 成功，后续正常 finalize
         pipeline::PipelineResult result;
         result.success = writer->GetLastError() == WriterError::kOk;
+        result.terminal_state = pipeline::PipelineState::kSucceeded;
         writer->OnTerminal(result);
     }
 }
@@ -344,17 +347,15 @@ TEST_F(FinalMediaWriterFailureTest, OnTerminalWithFailedResult) {
     // Pipeline 报告失败
     pipeline::PipelineResult result;
     result.success = false;
+    result.terminal_state = pipeline::PipelineState::kFailed;
     result.error_code = pipeline::PipelineErrorCode::kInferenceFailed;
     result.error_message = "Inference failed mid-stream";
 
     writer->OnTerminal(result);
 
-    // 即使 Pipeline 失败，writer 仍应完成 finalize
+    // Pipeline 失败时不得留下输出文件（不写 trailer，清理半成品）
     EXPECT_TRUE(writer->IsFinalized());
-    // 如果 writer 本身没出错，文件应存在
-    if (writer->GetLastError() == WriterError::kOk) {
-        EXPECT_TRUE(FileExists(tmp_path_));
-    }
+    EXPECT_FALSE(FileExists(tmp_path_));
 }
 
 // ============================================================================
@@ -378,6 +379,7 @@ TEST_F(FinalMediaWriterFailureTest, ManyFramesNoCrash) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(FileExists(tmp_path_));
@@ -406,9 +408,113 @@ TEST_F(FinalMediaWriterFailureTest, ExplicitDimensionsInConfig) {
 
     pipeline::PipelineResult result;
     result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
     writer->OnTerminal(result);
 
     EXPECT_TRUE(FileExists(tmp_path_));
+}
+
+// ============================================================================
+// OnTerminal 检查 PipelineResult：取消 → 清理并移除文件
+// ============================================================================
+
+TEST_F(FinalMediaWriterFailureTest, OnTerminalCancelledRemovesFile) {
+    WriterConfig cfg;
+    cfg.output_path = tmp_path_;
+
+    auto writer = std::make_shared<FinalMediaWriter>(cfg);
+
+    // 正常写几帧（writer 自身无错误）
+    for (int i = 0; i < 3; ++i) {
+        auto frame = MakeSyntheticFrame(192, 192, i);
+        auto pf = MakePipelineFrame(frame, i * 40000, i);
+        writer->OnFrame(pf);
+    }
+    EXPECT_EQ(writer->GetLastError(), WriterError::kOk);
+    EXPECT_TRUE(FileExists(tmp_path_));
+
+    // Pipeline 被用户取消
+    pipeline::PipelineResult result;
+    result.success = false;
+    result.terminal_state = pipeline::PipelineState::kCancelled;
+    result.error_code = pipeline::PipelineErrorCode::kOk;
+    writer->OnTerminal(result);
+
+    // 取消时不得留下输出文件
+    EXPECT_TRUE(writer->IsFinalized());
+    EXPECT_FALSE(FileExists(tmp_path_));
+}
+
+// ============================================================================
+// OnTerminal 检查 PipelineResult：错误结果 → 清理并移除文件
+// ============================================================================
+
+TEST_F(FinalMediaWriterFailureTest, OnTerminalErrorResultRemovesFile) {
+    WriterConfig cfg;
+    cfg.output_path = tmp_path_;
+
+    auto writer = std::make_shared<FinalMediaWriter>(cfg);
+
+    // 正常写几帧（writer 自身无错误）
+    for (int i = 0; i < 3; ++i) {
+        auto frame = MakeSyntheticFrame(192, 192, i);
+        auto pf = MakePipelineFrame(frame, i * 40000, i);
+        writer->OnFrame(pf);
+    }
+    EXPECT_EQ(writer->GetLastError(), WriterError::kOk);
+    EXPECT_TRUE(FileExists(tmp_path_));
+
+    // Pipeline 内部错误终止
+    pipeline::PipelineResult result;
+    result.success = false;
+    result.terminal_state = pipeline::PipelineState::kFailed;
+    result.error_code = pipeline::PipelineErrorCode::kInternalError;
+    result.error_message = "Pipeline internal error";
+    writer->OnTerminal(result);
+
+    // 错误终止时不得留下输出文件
+    EXPECT_TRUE(writer->IsFinalized());
+    EXPECT_FALSE(FileExists(tmp_path_));
+}
+
+// ============================================================================
+// OnTerminal 检查 PipelineResult：Succeeded → 写出有效 MP4
+// ============================================================================
+
+TEST_F(FinalMediaWriterFailureTest, OnTerminalSucceededWritesValidMp4) {
+    WriterConfig cfg;
+    cfg.output_path = tmp_path_;
+
+    auto writer = std::make_shared<FinalMediaWriter>(cfg);
+
+    for (int i = 0; i < 5; ++i) {
+        auto frame = MakeSyntheticFrame(192, 192, i);
+        auto pf = MakePipelineFrame(frame, i * 40000, i);
+        writer->OnFrame(pf);
+    }
+    EXPECT_EQ(writer->GetLastError(), WriterError::kOk);
+
+    // Pipeline 正常完成
+    pipeline::PipelineResult result;
+    result.success = true;
+    result.terminal_state = pipeline::PipelineState::kSucceeded;
+    writer->OnTerminal(result);
+
+    EXPECT_TRUE(writer->IsFinalized());
+    EXPECT_EQ(writer->GetLastError(), WriterError::kOk);
+    EXPECT_TRUE(FileExists(tmp_path_));
+
+    // 文件应可被 ffprobe 解析为包含视频流的有效 MP4
+    std::string cmd = "ffprobe -v error -select_streams v:0 -show_entries "
+                      "stream=codec_type -of csv=p=0 " + tmp_path_ +
+                      " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe) {
+        char buf[64] = {0};
+        fread(buf, 1, sizeof(buf) - 1, pipe);
+        pclose(pipe);
+        EXPECT_NE(std::string(buf).find("video"), std::string::npos);
+    }
 }
 
 }  // namespace
