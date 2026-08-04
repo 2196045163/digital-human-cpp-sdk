@@ -168,7 +168,9 @@ public:
     bool HasFatalError() const { return fatal_error_.load(std::memory_order_acquire); }
 
     /// @brief 获取致命错误消息（仅在 HasFatalError() 为 true 时有意义）
+    /// @note  持 fatal_error_mutex_ 确保看到 release-store 之后写入的完整消息
     std::string FatalErrorMessage() const {
+        std::lock_guard<std::mutex> lock(fatal_error_mutex_);
         return fatal_error_message_;
     }
 
@@ -231,10 +233,13 @@ private:
                 // 正常用户异常由 packaged_task 写入 future。这里做线程入口兜底：
                 // 记录 pool 级致命错误、停止接收新任务并唤醒所有等待者。
                 // 如果到达此处，说明 packaged_task 包装本身出现了无法传播到 future 的错误。
-                bool expected = false;
-                if (fatal_error_.compare_exchange_strong(expected, true)) {
-                    fatal_error_message_ = std::string("BoundedWorkerPool worker 兜底异常：")
-                                           + e.what();
+                {
+                    std::lock_guard<std::mutex> flk(fatal_error_mutex_);
+                    if (!fatal_error_.load(std::memory_order_relaxed)) {
+                        fatal_error_message_ = std::string("BoundedWorkerPool worker 兜底异常：")
+                                               + e.what();
+                        fatal_error_.store(true, std::memory_order_release);
+                    }
                 }
                 // 必须持 queue_mutex_ 修改 accepting_/stopping_：与 Enqueue 的
                 // 谓词检查互斥，堵住"检查通过后入队到已停止池"的竞态窗口；
@@ -248,9 +253,12 @@ private:
                 not_full_.notify_all();
             } catch (...) {
                 // 未知异常，同上处理
-                bool expected = false;
-                if (fatal_error_.compare_exchange_strong(expected, true)) {
-                    fatal_error_message_ = "BoundedWorkerPool worker 兜底未知异常";
+                {
+                    std::lock_guard<std::mutex> flk(fatal_error_mutex_);
+                    if (!fatal_error_.load(std::memory_order_relaxed)) {
+                        fatal_error_message_ = "BoundedWorkerPool worker 兜底未知异常";
+                        fatal_error_.store(true, std::memory_order_release);
+                    }
                 }
                 // 必须持 queue_mutex_ 修改 accepting_/stopping_：与 Enqueue 的
                 // 谓词检查互斥，堵住"检查通过后入队到已停止池"的竞态窗口；
@@ -278,9 +286,11 @@ private:
     bool stopping_ = false;
 
     // 兜底致命错误：worker 的 catch(...) 中记录，供 Scheduler/Pipeline 查询
+    // fatal_error_ 和 fatal_error_message_ 由 fatal_error_mutex_ 保护：
+    // writer 先写消息，再以 release store 发布 flag；
+    // reader 以 acquire load 读 flag，确认 true 后持锁读消息。
+    mutable std::mutex fatal_error_mutex_;
     std::atomic<bool> fatal_error_{false};
-    // 非 atomic：只有 compare_exchange 成功的那一个 worker 写一次（唯一写者）；
-    // 读者必须先查 HasFatalError() 再读，保证 happens-before 关系。
     std::string fatal_error_message_;
 
     // 不保护数据，只串行化 Stop：置标志 + join 同一个 thread 必须互斥

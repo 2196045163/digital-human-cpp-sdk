@@ -1063,7 +1063,10 @@ PipelineResult DigitalHumanPipeline::Wait() {
                 PipelineResult term_result;
                 term_result.success = (final_state == PipelineState::kSucceeded);
                 term_result.terminal_state = final_state;
-                term_result.stats = shared.stats;
+                {
+                    std::lock_guard<std::mutex> stats_lock(shared.stats_mutex);
+                    term_result.stats = shared.stats;
+                }
                 term_result.stats.state = final_state;
                 term_result.stats.termination = term;
 
