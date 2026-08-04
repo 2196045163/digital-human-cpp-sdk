@@ -14,8 +14,8 @@
 #   bash scripts/run_performance_benchmark.sh [iterations] [output_dir]
 #
 # 输出：
-#   log_dir/ — 原始日志（每轮独立子目录）
-#   golden_output/ — benchmark JSON（汇总 + 每轮详细）
+#   log_dir/ — 原始日志（每轮独立子目录 + 单轮原始 JSON）
+#   golden_output/ — benchmark JSON（汇总 + 每轮详细 + 验证后删除的 MP4）
 #   log_dir/SUMMARY.txt — 文本摘要
 #   log_dir/ENVIRONMENT.txt — 环境证据
 # =============================================================================
@@ -113,11 +113,12 @@ echo "=== Running Benchmark ($ITERATIONS iterations) ==="
 cd "$PROJECT_DIR"
 
 # 使用 /usr/bin/time -v 采集资源指标
+# 第三个参数 raw_log_dir：单轮原始 JSON（含帧轨迹）写入 logs/performance_benchmark/<ts>/
 BENCH_LOG="$RUN_LOG_DIR/benchmark_run.log"
 TIME_LOG="$RUN_LOG_DIR/time_v_output.txt"
 
 /usr/bin/time -v -o "$TIME_LOG" \
-    "$BENCH_BIN" "$ITERATIONS" "$OUTPUT_DIR" \
+    "$BENCH_BIN" "$ITERATIONS" "$OUTPUT_DIR" "$RUN_LOG_DIR" \
     2>&1 | tee "$BENCH_LOG"
 
 BENCH_EXIT_CODE="${PIPESTATUS[0]}"
@@ -149,6 +150,12 @@ SUMMARY_FILE="$RUN_LOG_DIR/SUMMARY.txt"
     echo ""
     echo "--- Per-run JSON Files ---"
     ls -la "$OUTPUT_DIR"/pipeline_benchmark_run_*.json 2>/dev/null || echo "No per-run JSON files found"
+    echo ""
+    echo "--- Raw Per-run JSON Files (frame traces + ffprobe) ---"
+    ls -la "$RUN_LOG_DIR"/pipeline_benchmark_run_raw_*.json 2>/dev/null || echo "No raw per-run JSON files found"
+    echo ""
+    echo "--- MP4 Verification ---"
+    echo "Benchmark writes an MP4 per run via FinalMediaWriter, verifies it with ffprobe (streams, frame count, codec, size), then deletes it. Details in per-run JSONs."
     echo ""
     echo "--- Log Files ---"
     echo "Environment: $ENV_FILE"
