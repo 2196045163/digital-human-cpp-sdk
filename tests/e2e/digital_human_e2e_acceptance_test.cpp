@@ -216,6 +216,27 @@ static bool FfprobePtsMonotonic(const std::string& path) {
     return true;
 }
 
+/// @brief MP4 正常 trailer 校验：文件尾部存在 moov atom（非截断/非伪产物）
+static bool HasNormalMoovTrailer(const std::string& path) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f.good()) return false;
+    std::streampos size = f.tellg();
+    if (size < 8) return false;
+    const long kTailBytes = 65536;  // 非 faststart MP4 的 moov 落在文件末尾
+    long read_len = std::min<long>(kTailBytes, static_cast<long>(size));
+    f.seekg(-read_len, std::ios::end);
+    std::string tail(read_len, '\0');
+    f.read(&tail[0], read_len);
+    if (!f.good()) return false;
+    return tail.find("moov") != std::string::npos;
+}
+
+/// @brief ffprobe -v error 全量解析无错误（moov/尾部完整 → 正常 trailer）
+/// @note 不带 show_entries：健康文件 stdout 为空，任何截断/损坏都会输出错误
+static bool FfprobeParsesClean(const std::string& path) {
+    return RunFfprobe(path, "").empty();
+}
+
 /// @brief 文件是否存在且非空
 static bool FileExistsNonEmpty(const std::string& path) {
     std::ifstream f(path, std::ios::binary | std::ios::ate);
@@ -432,17 +453,10 @@ TEST_F(E2EAcceptanceTest, PipelineGoldenRegression) {
     ASSERT_TRUE(start_result.success)
         << "Pipeline Start failed: " << start_result.error_message;
 
-    // 等待所有帧到达（最长 180s）
-    constexpr auto kFrameTimeout = std::chrono::seconds(180);
-    const auto deadline = std::chrono::steady_clock::now() + kFrameTimeout;
-    while (sink->frame_count() < kExpectedFrames
-           && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
-    // 请求停止并等待 OnTerminal
-    pipeline.RequestStop();
-    sink->WaitForTerminal(std::chrono::milliseconds(10000));
+    // 不调用 RequestStop —— 管线必须经 EOS（音频输入耗尽）自然完成，
+    // 终态 kSucceeded 仅在全部帧处理完毕、队列排空后交付。
+    // 正常完成应在最后一帧后立即到达；180s 为失败上限。
+    sink->WaitForTerminal(std::chrono::milliseconds(180000));
 
     auto t_end = std::chrono::steady_clock::now();
     auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -458,15 +472,14 @@ TEST_F(E2EAcceptanceTest, PipelineGoldenRegression) {
         << "Expected exactly " << kExpectedFrames
         << " frames for 3s audio at 25fps, got " << frame_count;
 
-    // 2. OnTerminal 交付且为 NormalEos 或 Succeeded
+    // 2. OnTerminal 必须交付，且终态必须为 kSucceeded（正常 EOS 完成）。
+    //    拒绝 kDraining / kCancelled —— 任何非正常完成均视为失败。
     EXPECT_TRUE(sink->terminal_called())
         << "OnTerminal was not called within timeout";
     if (sink->terminal_called()) {
         auto term = sink->terminal_result();
-        EXPECT_TRUE(term.terminal_state == pipeline::PipelineState::kSucceeded
-                    || term.terminal_state == pipeline::PipelineState::kDraining
-                    || term.terminal_state == pipeline::PipelineState::kCancelled)
-            << "Terminal state: "
+        EXPECT_TRUE(term.terminal_state == pipeline::PipelineState::kSucceeded)
+            << "Terminal state must be kSucceeded (NormalEos), got: "
             << pipeline::PipelineStateToString(term.terminal_state);
         WriteLog("Terminal state: " +
                  pipeline::PipelineStateToString(term.terminal_state));
@@ -526,9 +539,11 @@ TEST_F(E2EAcceptanceTest, FinalMp4NormalEos) {
     EXPECT_TRUE(FileExistsNonEmpty(output_path_))
         << "MP4 output file does not exist or is empty: " << output_path_;
 
-    // frame_count 在 JSON 中存在
+    // frame_count 必须为精确 75 帧
     int64_t json_frame_count = JsonGetIntValue(out.stdout_text, "frame_count");
-    EXPECT_GE(json_frame_count, 0) << "frame_count missing or negative in JSON";
+    EXPECT_EQ(json_frame_count, kExpectedFrames)
+        << "frame_count must be exactly " << kExpectedFrames
+        << ", got " << json_frame_count;
     WriteLog("FinalMp4NormalEos: json_frame_count=" + std::to_string(json_frame_count));
 
     // 保存 ffprobe 证据
@@ -556,7 +571,7 @@ TEST_F(E2EAcceptanceTest, Exact75FramesDualStream) {
     EXPECT_EQ(video_streams, 1) << "Expected exactly 1 video stream";
     EXPECT_EQ(audio_streams, 1) << "Expected exactly 1 audio stream";
 
-    // 2. 精确帧数
+    // 2. 精确帧数：必须正好 75 帧（不接受编码器 ±1 容差）
     std::string nb_frames = RunFfprobe(output_path_,
         "-select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0");
     int probed_frames = 0;
@@ -565,11 +580,9 @@ TEST_F(E2EAcceptanceTest, Exact75FramesDualStream) {
                         nb_frames.end());
         probed_frames = std::atoi(nb_frames.c_str());
     }
-    // 允许编码器延迟导致的 ±1 帧
-    EXPECT_GE(probed_frames, kExpectedFrames - 1)
-        << "ffprobe frame count too low: " << probed_frames;
-    EXPECT_LE(probed_frames, kExpectedFrames + 1)
-        << "ffprobe frame count too high: " << probed_frames;
+    EXPECT_EQ(probed_frames, kExpectedFrames)
+        << "ffprobe frame count must be exactly " << kExpectedFrames
+        << ", got " << probed_frames;
 
     // 3. 帧率
     std::string r_frame_rate = RunFfprobe(output_path_,
@@ -593,6 +606,12 @@ TEST_F(E2EAcceptanceTest, Exact75FramesDualStream) {
         << "Duration too short: " << duration << "s";
     EXPECT_LE(duration, kExpectedDuration + kDurationTolerance)
         << "Duration too long: " << duration << "s";
+
+    // 5. 正常 trailer：moov atom 存在且 ffprobe 全量解析无错误
+    EXPECT_TRUE(HasNormalMoovTrailer(output_path_))
+        << "MP4 missing moov trailer atom (possibly truncated output)";
+    EXPECT_TRUE(FfprobeParsesClean(output_path_))
+        << "ffprobe reported errors parsing MP4 (corrupt or truncated trailer)";
 
     WriteLog("Exact75FramesDualStream: probed_frames=" +
              std::to_string(probed_frames) + " duration=" +
@@ -664,13 +683,16 @@ TEST_F(E2EAcceptanceTest, ManifestConsistentWithFfprobe) {
         probed_frames = std::atoi(nb_frames.c_str());
     }
 
-    // JSON frame_count 应在 ffprobe ±1 范围内
-    EXPECT_GE(json_frame_count, probed_frames - 1)
+    // JSON frame_count 必须与 ffprobe 完全一致，且均为精确 75 帧
+    EXPECT_EQ(json_frame_count, probed_frames)
         << "JSON frame_count (" << json_frame_count
-        << ") < ffprobe nb_read_frames - 1 (" << (probed_frames - 1) << ")";
-    EXPECT_LE(json_frame_count, probed_frames + 1)
-        << "JSON frame_count (" << json_frame_count
-        << ") > ffprobe nb_read_frames + 1 (" << (probed_frames + 1) << ")";
+        << ") != ffprobe nb_read_frames (" << probed_frames << ")";
+    EXPECT_EQ(json_frame_count, kExpectedFrames)
+        << "JSON frame_count must be exactly " << kExpectedFrames
+        << ", got " << json_frame_count;
+    EXPECT_EQ(probed_frames, kExpectedFrames)
+        << "ffprobe frame count must be exactly " << kExpectedFrames
+        << ", got " << probed_frames;
 
     // output_path 在 JSON 中存在
     EXPECT_NE(out.stdout_text.find(output_path_), std::string::npos)
@@ -836,8 +858,10 @@ TEST_F(E2EAcceptanceTest, StabilityThreeRounds) {
         int exit_code;
         int64_t frame_count;
         double duration_ms;
-        int ffprobe_frames;
-        double ffprobe_duration;
+        int ffprobe_frames = -1;
+        double ffprobe_duration = -1.0;
+        bool pts_monotonic = false;
+        bool dual_stream_ok = false;
         bool passed;
         std::string output_path;
     };
@@ -846,6 +870,8 @@ TEST_F(E2EAcceptanceTest, StabilityThreeRounds) {
 
     for (int round = 0; round < 3; ++round) {
         std::string round_output_dir = output_dir_ + "/round_" + std::to_string(round);
+        // 每轮开始前清理该轮目录，确保本轮产物无上一轮残留
+        fs::remove_all(round_output_dir);
         fs::create_directories(round_output_dir);
         std::string round_mp4 = round_output_dir + "/output.mp4";
 
@@ -873,7 +899,7 @@ TEST_F(E2EAcceptanceTest, StabilityThreeRounds) {
 
         rr.frame_count = JsonGetIntValue(out.stdout_text, "frame_count");
 
-        // ffprobe
+        // ffprobe + 产物校验
         if (FileExistsNonEmpty(round_mp4)) {
             std::string nb = RunFfprobe(round_mp4,
                 "-select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0");
@@ -889,27 +915,58 @@ TEST_F(E2EAcceptanceTest, StabilityThreeRounds) {
                 rr.ffprobe_duration = std::atof(dur.c_str());
             }
 
+            rr.pts_monotonic = FfprobePtsMonotonic(round_mp4);
+            rr.dual_stream_ok =
+                GetStreamCount(round_mp4, "video") == 1
+                && GetStreamCount(round_mp4, "audio") == 1;
+
             // 保存本轮 evidence
             SaveEvidence(round_output_dir + "/manifest.json", out.stdout_text);
         }
 
+        // 本轮通过要求全部条件：退出码、JSON 成功、精确 75 帧、
+        // ffprobe 精确 75 帧、PTS 单调、时长容差、双流齐全
         rr.passed = (rr.exit_code == 0)
-                    && (rr.frame_count >= kExpectedFrames - 1)
-                    && (rr.frame_count <= kExpectedFrames + 1);
+                    && !out.timed_out
+                    && JsonHasKeyValue(out.stdout_text, "status", "success")
+                    && JsonKeyIsNull(out.stdout_text, "error")
+                    && (rr.frame_count == kExpectedFrames)
+                    && (rr.ffprobe_frames == kExpectedFrames)
+                    && rr.pts_monotonic
+                    && rr.dual_stream_ok
+                    && (rr.ffprobe_duration >= kExpectedDuration - kDurationTolerance)
+                    && (rr.ffprobe_duration <= kExpectedDuration + kDurationTolerance);
 
         rounds.push_back(rr);
 
-        // 本轮断言
+        // 本轮断言（逐项，全部必须通过）
         EXPECT_EQ(rr.exit_code, 0)
             << "Round " << round << " CLI failed with exit code " << rr.exit_code;
-        EXPECT_GE(rr.frame_count, kExpectedFrames - 1)
-            << "Round " << round << " frame count too low: " << rr.frame_count;
-        EXPECT_LE(rr.frame_count, kExpectedFrames + 1)
-            << "Round " << round << " frame count too high: " << rr.frame_count;
+        EXPECT_FALSE(out.timed_out)
+            << "Round " << round << " CLI timed out";
+        EXPECT_TRUE(JsonHasKeyValue(out.stdout_text, "status", "success"))
+            << "Round " << round << " JSON status is not success";
+        EXPECT_TRUE(JsonKeyIsNull(out.stdout_text, "error"))
+            << "Round " << round << " JSON error should be null";
+        EXPECT_EQ(rr.frame_count, kExpectedFrames)
+            << "Round " << round << " JSON frame count must be exactly "
+            << kExpectedFrames << ", got " << rr.frame_count;
+        EXPECT_EQ(rr.ffprobe_frames, kExpectedFrames)
+            << "Round " << round << " ffprobe frame count must be exactly "
+            << kExpectedFrames << ", got " << rr.ffprobe_frames;
+        EXPECT_TRUE(rr.pts_monotonic)
+            << "Round " << round << " video PTS is not monotonic";
+        EXPECT_TRUE(rr.dual_stream_ok)
+            << "Round " << round << " must have exactly 1 video + 1 audio stream";
+        EXPECT_GE(rr.ffprobe_duration, kExpectedDuration - kDurationTolerance)
+            << "Round " << round << " duration too short: " << rr.ffprobe_duration << "s";
+        EXPECT_LE(rr.ffprobe_duration, kExpectedDuration + kDurationTolerance)
+            << "Round " << round << " duration too long: " << rr.ffprobe_duration << "s";
 
         WriteLog("StabilityThreeRounds: Round " + std::to_string(round) +
                  " exit=" + std::to_string(rr.exit_code) +
                  " frames=" + std::to_string(rr.frame_count) +
+                 " ffprobe_frames=" + std::to_string(rr.ffprobe_frames) +
                  " dur=" + std::to_string(rr.duration_ms) + "ms" +
                  " passed=" + (rr.passed ? "YES" : "NO"));
     }
@@ -940,13 +997,16 @@ TEST_F(E2EAcceptanceTest, StabilityThreeRounds) {
                  "ms cv=" + std::to_string(cv) + "%");
 
         std::cout << "\n=== M04 Stability 3 Rounds ===" << std::endl;
-        std::cout << "Round 1: " << rounds[0].frame_count << " frames, "
+        std::cout << "Round 1: " << rounds[0].frame_count << " frames (ffprobe "
+                  << rounds[0].ffprobe_frames << "), "
                   << rounds[0].duration_ms << " ms, exit="
                   << rounds[0].exit_code << std::endl;
-        std::cout << "Round 2: " << rounds[1].frame_count << " frames, "
+        std::cout << "Round 2: " << rounds[1].frame_count << " frames (ffprobe "
+                  << rounds[1].ffprobe_frames << "), "
                   << rounds[1].duration_ms << " ms, exit="
                   << rounds[1].exit_code << std::endl;
-        std::cout << "Round 3: " << rounds[2].frame_count << " frames, "
+        std::cout << "Round 3: " << rounds[2].frame_count << " frames (ffprobe "
+                  << rounds[2].ffprobe_frames << "), "
                   << rounds[2].duration_ms << " ms, exit="
                   << rounds[2].exit_code << std::endl;
         std::cout << "Duration spread: " << spread << " ms" << std::endl;
