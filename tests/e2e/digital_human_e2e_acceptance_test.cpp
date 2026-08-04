@@ -65,6 +65,9 @@ const fs::path kGoldenAudioPath = "testdata/golden/audio.wav";
 const fs::path kModelParamPath = "models/wav2lip/wav2lip.param";
 const fs::path kLandmarkModelPath = "models/shape_predictor_68_face_landmarks.dat";
 const std::string kDedicatedOutputBase = "/tmp/m04_e2e_acceptance";
+// Golden 音频实测恰好 3.000s：3s @ 25fps = 精确 75 帧（75 = 3*25，整数）。
+// 断言必须"精确 75"而非"74~76 容差"：离线链路是确定性的，每帧都应被编码
+// 写入，容差会掩盖丢帧（74）/重复帧（76）之类的回归，见测试 2 的说明。
 const int kExpectedFrames = 75;            // 3s audio @ 25fps
 const double kExpectedDuration = 3.0;      // seconds
 const double kDurationTolerance = 0.5;     // ±0.5s
@@ -516,7 +519,23 @@ TEST_F(E2EAcceptanceTest, PipelineGoldenRegression) {
 // ============================================================================
 // 测试 2: Final MP4 Acceptance（CLI → MP4 精确 75 帧、双流、NormalEos）
 // ============================================================================
-
+//
+// Golden 断言设计原因：
+// - 必须要求正常 EOS（kSucceeded），而非 kDraining/kCancelled：只有音频输入
+//   耗尽后自然完成的终态才代表"全部帧已被生成并写出"；kDraining/kCancelled
+//   意味着调度中途停止，帧序列不完整，属于提前终止回归。
+// - 精确 75 帧而非容差：3s @ 25fps 恰好整除（75），离线链路无丢帧/重复的
+//   正当理由，任何 ±1 都直接对应一次丢帧或重复帧回归，必须精确暴露。
+// - ffprobe 双流验证：确认 mux 后容器结构为恰好 1 video + 1 audio，防止
+//   "有画面无声音"、多余流或封装错位等回归。
+// - PTS 单调性与 start_pts=0：容器时间戳错乱会破坏播放器 seek/音画同步，
+//   是 writer PTS 换算（微秒 → 编码器 time_base）出错的直接证据。
+// - trailer 检查（文件尾部 moov atom + ffprobe 全量解析无错误）：未写
+//   trailer 的 MP4 无法正常解析，这是 writer 未 Finalize 或中途失败时
+//   留下的"坏文件"最直接的检测手段。
+// - 同时校验 JSON（status/frame_count/error）与 ffprobe 两路独立证据，
+//   互相印证，任何一路不一致都判失败。
+//
 /// @brief CLI Golden Smoke: 生成 MP4 且 JSON 报告成功
 TEST_F(E2EAcceptanceTest, FinalMp4NormalEos) {
     WriteLog("FinalMp4NormalEos: Starting CLI...");
@@ -848,7 +867,19 @@ TEST_F(E2EAcceptanceTest, RealtimeModeRejected) {
 // ============================================================================
 // 测试 5: Stability（同配置 3 轮全部通过并记录差异）
 // ============================================================================
-
+//
+// 三轮稳定性判定的必要条件：
+// - 单轮通过不足以证明稳定性（ncnn/编码/文件系统的偶发问题只有重复执行
+//   才能暴露），故要求同配置连续 3 轮全部通过。
+// - 每轮都执行与测试 2 相同的全量断言（退出码、JSON status/error、JSON 与
+//   ffprobe 帧数精确 75、PTS 单调、双流、时长容差），任何一轮任一条件不
+//   满足即判负——"3 轮全部通过"必须是逐项严格通过，而非只记 3 个退出码。
+// - 每轮前清理该轮输出目录：上一轮残留的 MP4 若仍在磁盘上，即使本轮 CLI
+//   失败，"文件存在且非空"也会误通过（伪产物误判）；从空目录开始保证
+//   产物字节可归因于本轮，这是验收测试不产生假阳性的前提。
+// - 另记录耗时 spread 与变异系数（CV）作为证据，但不作为阈值断言——
+//   耗时随机器负载波动，不能当作正确性标准。
+//
 /// @brief 同配置连续运行 3 轮，记录通过情况和差异
 TEST_F(E2EAcceptanceTest, StabilityThreeRounds) {
     WriteLog("StabilityThreeRounds: Starting 3 rounds...");
@@ -870,7 +901,8 @@ TEST_F(E2EAcceptanceTest, StabilityThreeRounds) {
 
     for (int round = 0; round < 3; ++round) {
         std::string round_output_dir = output_dir_ + "/round_" + std::to_string(round);
-        // 每轮开始前清理该轮目录，确保本轮产物无上一轮残留
+        // 每轮开始前清理该轮目录：若本轮 CLI 失败，旧轮残留的 MP4 会让
+        // "文件存在且非空"误通过（伪产物假阳性），且产物无法归因到本轮
         fs::remove_all(round_output_dir);
         fs::create_directories(round_output_dir);
         std::string round_mp4 = round_output_dir + "/output.mp4";

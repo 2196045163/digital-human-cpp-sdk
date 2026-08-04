@@ -253,6 +253,34 @@ static std::string ValidateArgs(const ParsedArgs& args) {
 // main
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// main：CLI 编排入口。
+//
+// 成功判定是"四条件联合"（第 11-12 步），全部满足才 exit 0 / status success：
+//   1) pipeline.Wait() 返回 success（Pipeline 终态 kSucceeded）
+//   2) writer->IsFinalized() 为 true（flush + trailer 已完成）
+//   3) writer->GetLastError() == kOk（编码/mux 无错误）
+//   4) 输出文件存在且非空（file_ok）
+//
+// 为什么不能仅凭 pipeline.Wait() 判断成功：
+//   - Wait() 只承诺 Pipeline 自身（推理/渲染/调度）跑完；写入与编码在
+//     FinalMediaWriter 内独立进行，其错误（编码失败、写文件失败、trailer
+//     失败）不会让 Wait() 失败，只记录在 writer 的 last_error 中。
+//   - 同理，writer 未 Finalize、文件缺失或为 0 字节，都是"pipeline 成功但
+//     产物无效"的独立失败模式。逐项区分并在 error 中定位，失败信息才
+//     可操作（用户能分辨是编码失败还是磁盘问题）。
+//
+// 退出码契约（与 --help 输出及契约测试保持一致，脚本可只解析 stdout）：
+//   0 = success；1 = 执行/产物错误；2 = 参数或校验错误；
+//   3 = realtime 模式被显式拒绝。
+//   错误路径始终输出机器可读 JSON（status / error_code / error_message）。
+//
+// writer/文件诊断字段（仅失败时填充，见 CliResult::has_writer_diagnostics）：
+//   error.writer_error / error.writer_finalized / error.file_exists /
+//   error.file_size —— 用于把"pipeline 成功但产物无效"的根因区分出来，
+//   例如 writer 编码失败 vs 未 Finalize vs 文件缺失 vs 空文件。
+// ----------------------------------------------------------------------------
+
 int main(int argc, char* argv[]) {
     // ---- 1. 解析参数 ----
     auto args = ParseArgs(argc, argv);

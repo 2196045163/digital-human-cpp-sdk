@@ -17,6 +17,45 @@ namespace digital_human {
 namespace output {
 
 // ============================================================================
+// FinalMediaWriter（实现见下方 PImpl）— 设计要点
+// ============================================================================
+//
+// 资源所有权与生命周期：
+//   - fmt_ctx（AVFormatContext）是 muxer 与 AVIO（输出文件句柄）的唯一所有者，
+//     并拥有全部 AVStream；video_enc_ctx / audio_enc_ctx 是独立分配的编码器
+//     上下文，必须先于 fmt_ctx 释放（编码器内部缓冲可能持有流相关状态）。
+//   - stream 指针归 fmt_ctx 所有，不单独释放，只在清理时置空防悬垂。
+//   - 所有 FFmpeg 对象仅经 SafeFree* 辅助释放；Cleanup 顺序固定：
+//     Sws/Swr → AVFrame → AVPacket → 编码器 → fmt_ctx，保证任一路径
+//     都无泄漏、无双释放。
+//
+// PTS 换算约定（统一换算到"编码器 time_base"后再写 AVFrame）：
+//   - 视频：Pipeline 交付微秒级时间戳（固定帧率下与帧序号一一对应，
+//     frame_index = pts_us * fps / 1e6）。OnFrame 中 av_rescale_q 换算到
+//     video_enc_ctx->time_base（fps_den/fps_num），并经 next_video_pts 钳制
+//     单调不后退——编码器不接受 PTS 回退，回退会污染容器时间戳。
+//   - 音频：PCM 是连续采样流，AVFrame::pts 直接取"已消费采样数"
+//     （sample_offset），其单位恰好是 audio_enc_ctx->time_base
+//     （1/sample_rate），天然无需换算。
+//   - 包写盘时 av_packet_rescale_ts 再做"编码器 time_base → 流 time_base"
+//     换算；视频/音频共用 ReceiveAndWritePackets 交错写帧，保证 mux 顺序。
+//
+// Finalize 顺序（flush → 音频 → trailer → 关闭）：
+//   先 flush 视频编码器（avcodec_send_frame(nullptr) 排出延迟帧），再编码
+//   全部音频并 flush 音频编码器，最后 av_write_trailer 写 moov 等收尾 atom
+//   并关闭文件。顺序不可颠倒：编码器滞留帧不先排出，容器内帧数就不足。
+//
+// OnTerminal 处理路径（区分 Pipeline 成功/失败/取消）：
+//   - Pipeline kSucceeded 且 writer 无错且 header 已写 → Finalize，产物完整。
+//   - 其余一律（kDraining/kCancelled/kFailed、writer 自身错误、从未成功打开
+//     输出）→ 只 Cleanup、不写 trailer、删除半成品文件。
+//
+// 失败时删除不完整 MP4 的原因：未写 trailer 的 MP4 无法被播放器/ffprobe 正常
+// 解析，是明确的坏文件。让文件"不存在"而非"存在但损坏"，可使上层（CLI、
+// 测试）以退出码/JSON/文件存在性为唯一真相源，避免"产物存在但不完整"的
+// 歧义状态被误判为成功。
+
+// ============================================================================
 // 内部 RAII 辅助
 // ============================================================================
 

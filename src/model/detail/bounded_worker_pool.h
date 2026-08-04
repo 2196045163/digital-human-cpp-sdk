@@ -37,6 +37,45 @@ struct BoundedEnqueueResult {
 
 /// @brief 固定 worker + 有界 FIFO 队列；Stop 拒绝新任务并排空已接收任务
 /// @note  这是 src/model/detail 内部构件，不包含 ncnn、batch 结果或公开 Scheduler 状态。
+//
+// ============================================================================
+// 并发模型与锁纪律（实现注释）
+// ============================================================================
+//
+// 同步结构：queue_mutex_ 保护 tasks_ / accepting_ / stopping_ 三个成员，
+// not_empty_ / not_full_ 是与该锁配对的条件变量。
+//
+// 有界队列容量与生产者等待语义：
+//   - queue_capacity_ 只限制"排队中"的任务数，不包含正在执行的任务——
+//     执行中的 worker 不再占用队位，所以容量不等于并发度。
+//   - Enqueue 持锁在 not_full_ 上等待"accepting_ 为假（立刻放行去拿
+//     kStopping）或队列有空位"，超时返回 kTimedOut（任务从未进入队列）。
+//
+// stop/drain 行为（Stop 与兜底 catch 共用同一模式）：
+//   1) 先置 accepting_ = false：拒绝一切新任务（含正在 not_full_ 上等待的
+//      producer，谓词会立刻满足而返回 kStopping）。
+//   2) 再置 stopping_ = true 并 notify_all：唤醒等待中的 worker。
+//   3) worker 把已接收任务排空后才退出——退出条件 stopping_ && tasks_.empty()
+//      （见 WorkerLoop），保证"已接收的任务必然执行"这一契约；Stop 不等候
+//      正在执行的 task，也不强制终止可能永久阻塞的用户代码。
+//
+// 锁纪律（违反即数据竞争或死锁）：
+//   - tasks_ / accepting_ / stopping_ 严禁在 queue_mutex_ 外读写。
+//   - Stop 的 join 绝不能持 queue_mutex_：worker 退出前要取锁检查
+//     tasks_.empty()，Stop 若持锁 join 则两者互相等待。
+//   - lifecycle_mutex_ 不保护任何数据，只把并发/重复 Stop 串行化，避免两个
+//     调用者同时 join 同一个 std::thread（未定义行为）；Stop 可重复调用。
+//
+// 致命错误（worker 兜底 catch，正常用户异常已被 packaged_task 吞进 future，
+// 能走到这里说明包装本身出了问题）：
+//   - fatal_error_ 是 atomic，任意线程可读（Enqueue / HasFatalError）。
+//   - fatal_error_message_ 非 atomic，只有 compare_exchange 成功的那一个
+//     worker 写一次（唯一写者）；读者必须先确认 HasFatalError() 为 true——
+//     此时写入已发生且不会再有第二次写，因此无数据竞争。
+//   - 兜底修改 accepting_/stopping_ 时必须持有 queue_mutex_：与 Enqueue 的
+//     谓词检查互斥，堵住"检查通过后把任务入队到已停止池"的竞态窗口；
+//     通知放在锁外，避免唤醒者立刻阻塞在锁上。
+// ============================================================================
 class BoundedWorkerPool {
 public:
     /// @param worker_count 固定 worker 数，必须大于 0
@@ -197,8 +236,14 @@ private:
                     fatal_error_message_ = std::string("BoundedWorkerPool worker 兜底异常：")
                                            + e.what();
                 }
-                accepting_ = false;
-                stopping_ = true;
+                // 必须持 queue_mutex_ 修改 accepting_/stopping_：与 Enqueue 的
+                // 谓词检查互斥，堵住"检查通过后入队到已停止池"的竞态窗口；
+                // 通知放在锁外，避免唤醒者立刻阻塞在锁上。
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex_);
+                    accepting_ = false;
+                    stopping_ = true;
+                }
                 not_empty_.notify_all();
                 not_full_.notify_all();
             } catch (...) {
@@ -207,14 +252,23 @@ private:
                 if (fatal_error_.compare_exchange_strong(expected, true)) {
                     fatal_error_message_ = "BoundedWorkerPool worker 兜底未知异常";
                 }
-                accepting_ = false;
-                stopping_ = true;
+                // 必须持 queue_mutex_ 修改 accepting_/stopping_：与 Enqueue 的
+                // 谓词检查互斥，堵住"检查通过后入队到已停止池"的竞态窗口；
+                // 通知放在锁外，避免唤醒者立刻阻塞在锁上。
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex_);
+                    accepting_ = false;
+                    stopping_ = true;
+                }
                 not_empty_.notify_all();
                 not_full_.notify_all();
             }
         }
     }
 
+    // 受 queue_mutex_ 保护的成员：tasks_ / accepting_ / stopping_（严禁锁外
+    // 访问）。其余成员不需要该锁：queue_capacity_ 构造后只读；fatal_error_
+    // 是独立 atomic；workers_ 与 lifecycle_mutex_ 仅 Stop 访问。
     const std::size_t queue_capacity_;
     std::mutex queue_mutex_;
     std::condition_variable not_empty_;
@@ -225,8 +279,11 @@ private:
 
     // 兜底致命错误：worker 的 catch(...) 中记录，供 Scheduler/Pipeline 查询
     std::atomic<bool> fatal_error_{false};
-    std::string fatal_error_message_;  // 只在设置 fatal_error_ 时写入一次
+    // 非 atomic：只有 compare_exchange 成功的那一个 worker 写一次（唯一写者）；
+    // 读者必须先查 HasFatalError() 再读，保证 happens-before 关系。
+    std::string fatal_error_message_;
 
+    // 不保护数据，只串行化 Stop：置标志 + join 同一个 thread 必须互斥
     std::mutex lifecycle_mutex_;
     std::vector<std::thread> workers_;
 };

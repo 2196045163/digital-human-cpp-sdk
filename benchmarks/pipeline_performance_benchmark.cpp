@@ -175,6 +175,29 @@ private:
 //     才通知，因此等待返回即代表 MP4 已完整落盘）
 //   - 记录交付帧索引/PTS 轨迹（原始数据）
 //   - 透出 writer 的查询接口（写帧数、错误码）
+//
+// 测量边界与旧 BenchmarkSink 的区别：
+//   - 早期 BenchmarkSink 只统计 Pipeline 交付的帧数与队列水位，不产出任何
+//     真实文件，测量止于"帧出管线"；本 Sink 把每帧真实送入 FinalMediaWriter
+//     （BGR→YUV420P→libx264 → AAC → 交错 mux → 磁盘 MP4），测量边界是
+//     "端到端可交付产物"，编码/封装/写盘开销都在测量范围内。
+//   - 因此 total_wall_time_ms 包含 writer 的 OnTerminal（flush 视频编码器 +
+//     编码全部音频 + flush 音频 + trailer + 关文件）——它是真实用户路径的
+//     一部分，必须计入"生成一个 MP4 的总耗时"。
+//   - 代价是每轮都要跑完整 ncnn 推理 + 真实编码，单轮明显慢于纯队列基准；
+//     这正是本基准要测的对象，不能用假 sink 换取速度。
+//
+// 每轮记录内容（见 PerRunRecord / WriteRunJson）：
+//   - 耗时：total_wall_time_ms + PipelineStats 各阶段（prepare 已埋点；
+//     audio/inference/render 阶段计时器未在 worker 线程内累计，见汇总
+//     JSON 的 notes 说明，如实标注为未测量）。
+//   - 吞吐：frame_count / total_wall_time_ms 换算 fps。
+//   - 资源：RSS 峰值（/proc/self/status 轮询线程，~100ms 间隔）。
+//   - 队列水位：Q1/Q2 高水位与丢帧/重复计数（PipelineStats）。
+//   - 输出产物：writer 写入帧数、MP4 文件大小、ffprobe 验证结果
+//     （流数量/解码帧数/编码器/尺寸/时长）。
+//   - 环境与输入指纹：CPU/编译器/内核/hostname + 输入文件 SHA256，
+//     保证结果可复现、可追溯、可跨机器对比。
 
 class FinalMediaWriterSink : public PipelineOutputSink {
 public:

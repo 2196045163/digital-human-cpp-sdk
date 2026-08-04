@@ -22,6 +22,16 @@
 #     "The following tests did not run" / "No tests were found"，且
 #     期望测试（全量套件 / TSAN 正则匹配集）全部出现在运行结果中
 #   - TSAN 必须以 setarch x86_64 -R 运行（禁用 ASLR，TSAN 必需）
+#
+# 判定必须以 CTest 退出码为权威，不能只 grep 日志关键字：
+#   - CTest 退出码是"每个测试进程状态"的权威汇总——失败、超时、崩溃、
+#     fixture 未启动都会反映为非零；而日志关键字匹配并不可靠：报告可能被
+#     tee/缓冲截断，不同 sanitizer/FFmpeg/ncnn 的输出格式各异，关键字可能
+#     出现在无害上下文（如日志里提及某路径含 "ERROR"）。
+#   - 关键字检查只作为第二道防线，弥补退出码的盲区：TSAN 的报告（如 data
+#     race）不一定导致测试进程非零退出，这类情况只有靠日志才抓得到。
+#   - 两道防线缺一不可：只信退出码会漏掉 TSAN 报告，只 grep 关键字会
+#     漏掉测试未运行/崩溃等状态。
 # =============================================================================
 
 set -euo pipefail
@@ -33,6 +43,13 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 RUN_LOG_DIR="${LOG_DIR}/${TIMESTAMP}"
 
 # TSAN 核心（多线程路径）测试正则
+# 只覆盖真正并发多线程的路径：Pipeline 调度、有界队列、音画同步、播放、
+# 帧调度、时间戳管理。16 项 ncnn 推理/模型测试（wav2lip smoke、golden
+# upstream、视觉质量诊断、模型推理/加载等）刻意不进入 TSAN 矩阵：
+#   - 它们每次都要加载 ~138MB 模型做真实推理，TSAN 下慢一个数量级，
+#     会烧掉整个 TSAN 矩阵的预算；
+#   - 它们是确定性计算，主要风险不在数据竞争——线程正确性验证由
+#     上述多线程路径承担，推理测试的全量回归由 ASAN 矩阵负责。
 TSAN_TEST_REGEX="(pipeline\.|bounded_task_queue|audio_video_synchronous|portaudio_playback|frame_scheduler|timestamp_manager)"
 
 mkdir -p "$RUN_LOG_DIR/asan"
@@ -52,6 +69,9 @@ cd "$PROJECT_DIR"
 # 检测 CTest 日志中是否存在 NOT_RUN / SKIPPED / 无测试匹配
 # 注意：ctest -R 无匹配（"No tests were found!!!"）与跳过（***Skipped）时
 # 退出码仍为 0，必须解析日志才能识别"测试未运行"。
+# 必须检查 NOT_RUN / NOT_BUILT / SKIPPED 的原因：这些状态下 ctest 退出码
+# 仍为 0——"测试根本就没跑/没构建成功/被跳过"会伪装成通过；sanitizer 脚本
+# 的意义正是"这些测试确实执行过"，所以日志里出现任何这类标记即判 FAIL。
 ctest_had_not_run_or_skipped() {
     local log="$1"
     grep -qE "(\*\*\*Not Run|\*\*\*Skipped|No tests were found|The following tests did not run)" "$log" 2>/dev/null
@@ -194,6 +214,11 @@ TSAN_EXPECTED_COUNT="$(count_nonempty_lines "$TSAN_EXPECTED_TESTS")"
 TSAN_LOG="$RUN_LOG_DIR/tsan/ctest_output.log"
 if command -v setarch >/dev/null 2>&1; then
     # TSAN 必需：禁用地址空间布局随机化（ASLR），避免随机映射干扰 shadow memory
+    # 原因：TSAN 需要把 shadow memory 映射到进程地址空间的固定区域，ASLR 的
+    # 随机映射基址会与 shadow 区域冲突，导致 "unexpected memory mapping" 失败
+    # 或漏报；setarch x86_64 -R 固定地址空间布局（-R = 禁用 ASLR）。这是
+    # 运行条件而非优化：setarch 不存在时直接判失败，绝不降级为"ASLR 开着跑"
+    # ——保证每次 TSAN 运行的条件一致，结果才可比。
     echo "Running TSAN CTest with ASLR disabled (setarch x86_64 -R) as required..."
     set +e
     setarch x86_64 -R ctest --output-on-failure -j1 \

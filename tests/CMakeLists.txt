@@ -204,10 +204,13 @@ target_link_libraries(digital_human_pipeline_golden_test
     PRIVATE digital_human_core GTest::GTest GTest::Main)
 target_include_directories(digital_human_pipeline_golden_test
     PRIVATE ${PROJECT_SOURCE_DIR}/src)
+# TIMEOUT 480 的原因：本套件含 TwentyRealSessionsLoop（20 轮真实 ncnn 推理 +
+# 编码），ASAN 构建下执行时间约为普通 Debug 的数倍，120s 在 ASAN 下实测
+# 出现过超时；480s 给 sanitizer 构建留足余量，同时仍能暴露挂起/死锁。
 gtest_discover_tests(digital_human_pipeline_golden_test
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TEST_PREFIX "pipeline.golden."
-    PROPERTIES TIMEOUT 120)
+    PROPERTIES TIMEOUT 480)
 
 # ============================================================================
 # FinalMediaWriter 测试
@@ -256,10 +259,13 @@ target_link_libraries(digital_human_cli_contract_test
 target_compile_definitions(digital_human_cli_contract_test PRIVATE
     CLI_BINARY_DIR="${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
     PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+# TIMEOUT 360 的原因：CLI 契约测试以子进程方式多次启动 digital_human_app，
+# 每次都是完整推理 + 编码 + MP4 落盘（单次在 ASAN 下可能接近 2 分钟），
+# 多个用例叠加后单测超时需要放宽到 6 分钟。
 gtest_discover_tests(digital_human_cli_contract_test
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TEST_PREFIX "cli.contract."
-    PROPERTIES TIMEOUT 180)
+    PROPERTIES TIMEOUT 360)
 
 # ============================================================================
 # M04 E2E 验收测试
@@ -274,10 +280,13 @@ target_link_libraries(digital_human_e2e_acceptance_test
 target_compile_definitions(digital_human_e2e_acceptance_test PRIVATE
     CLI_BINARY_DIR="${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
     PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+# TIMEOUT 600 的原因：E2E 验收套件包含 10+ 个用例，多数都要启动完整 CLI
+# （推理 + 编码 + MP4），另有稳定性测试要连续跑 3 轮；ASAN 下全套耗时
+# 显著拉长，300s 实测不足，600s 保证稳定通过且仍能暴露挂起。
 gtest_discover_tests(digital_human_e2e_acceptance_test
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TEST_PREFIX "e2e.acceptance."
-    PROPERTIES TIMEOUT 300)
+    PROPERTIES TIMEOUT 600)
 
 # add_test(NAME audio_preprocessor_unit_test_dup COMMAND dummy_placeholder_test
 #          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
