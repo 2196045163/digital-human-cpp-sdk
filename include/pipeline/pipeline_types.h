@@ -182,7 +182,7 @@ struct PipelineStats {
     bool user_cancelled = false;
     bool internal_error = false;
 
-    // 任务计数（工作线程写入 + 主线程 GetStats 读取，均受 state_mutex 保护）
+    // 任务计数（worker 线程在 stats_mutex 下写入；GetStats/StatsToResult 在 stats_mutex 下读取）
     std::int64_t generated_task_count = 0;       ///< audio worker 生成的任务总数
     std::int64_t scheduler_accepted_count = 0;   ///< scheduler 接受的任务数
     std::int64_t scheduler_failed_count = 0;     ///< scheduler 失败的任务数
