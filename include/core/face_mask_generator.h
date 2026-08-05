@@ -30,12 +30,14 @@ namespace core {
         MouthRegionMode mouth_region = MouthRegionMode::kFullMouth; ///< 嘴部区域模式
         bool use_convex_hull = true;         ///< 是否使用凸包（让多边形区域更稳定）
         int dilate_radius = 3;               ///< 膨胀半径（控制嘴部区域向外扩展的像素数）
-        int blur_kernel_size = 13;           ///< 高斯模糊核大小（必须是正奇数，偶数会被自动修正），13 是经验值
+        // mask 羽化和范围参数已优化：缩小 bbox 扩展和羽化核，减少对脸颊/下巴原始纹理的不必要替换，
+        // 同时完整保留嘴唇、嘴角和合理张嘴区域的覆盖。96×96 模型分辨率限制见 FaceBlender 文档。
+        int blur_kernel_size = 7;            ///< 96×96 mask 高斯模糊核大小（奇数，自动修正）
         int border_clear = 2;                ///< 96x96 mask 边界清零像素数（防止回贴边框）
         bool limit_to_mouth_bbox = true;     ///< 是否限制 mask 不超出嘴部外接矩形扩展范围
-        float bbox_expand_x = 0.55f;         ///< 嘴部外接矩形水平扩展比例
-        float bbox_expand_top = 0.90f;       ///< 嘴部外接矩形上方扩展比例
-        float bbox_expand_bottom = 1.00f;    ///< 嘴部外接矩形下方扩展比例
+        float bbox_expand_x = 0.28f;         ///< 嘴部外接矩形水平扩展比例
+        float bbox_expand_top = 0.45f;       ///< 嘴部外接矩形上方扩展比例
+        float bbox_expand_bottom = 0.50f;    ///< 嘴部外接矩形下方扩展比例
     };
 
     /// @brief 本模块生成的 alpha mask 这张图的 mask 统计信息，方便 example 打印和测试验证

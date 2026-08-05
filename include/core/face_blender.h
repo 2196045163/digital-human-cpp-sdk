@@ -40,17 +40,23 @@ struct FaceBlendOptions {
     double sharpen_amount = 0.25;     ///< 锐化强度（0=不锐化，建议 0.15~0.35，太大→边缘噪声/光晕）
     double sharpen_sigma = 1.0;       ///< 锐化前高斯模糊的 sigma（控制"模糊"到什么程度再提取边缘）
 
-    // —— mask 羽化（让融合边界更自然） ——
+    // —— mask 羽化（已优化：缩小二次羽化核，配合 FaceMaskGenerator 的缩小 mask） ——
     bool enable_mask_blur = true;     ///< 回贴后是否对 mask 再做一次高斯模糊
-    int restored_mask_blur_kernel = 7;///< 高斯模糊核大小（必须是正奇数，7 是经验值）
+    int restored_mask_blur_kernel = 3;///< 回贴后 mask 高斯模糊核大小（奇数）
 
-    // —— 细节恢复（少量加回原图高频纹理，让嘴部有原图皮肤质感） ——
+    // —— 细节恢复（保持原有默认值，本轮不修改） ——
     bool enable_detail_restore = true;///< 是否从原图提取高频细节并少量加回融合区
-    double detail_sigma = 1.2;        ///< 提取原图细节前的高斯模糊 sigma（越大→提取的"高频"越粗）
-    double detail_strength = 0.12;    ///< 细节回填强度（0=不加，建议 0.08~0.15，太大→闭嘴纹理压制张嘴口型）
+    double detail_sigma = 1.2;        ///< 提取原图细节前的高斯模糊 sigma
+    double detail_strength = 0.12;    ///< 细节回填强度（保持原值 0.12，本轮不修改）
 
     // —— mask 范围控制 ——
-    bool clamp_mask = true;           ///< 融合前是否强制将 mask 限制在 0~1（防止越界值导致过曝/过暗）
+    bool clamp_mask = true;           ///< 融合前是否强制将 mask 限制在 0~1
+
+    // —— 局部颜色匹配 ——
+    // 在 alpha blend 前对 generated patch 做分通道均值-标准差匹配，
+    // 使生成嘴部的色调和对比度接近原始目标区域，减轻色差和贴片感。
+    // 只在 mask 有效区域内计算统计量，mask 外像素不改变。
+    bool enable_color_match = true;   ///< 是否启用 mask 内局部颜色匹配
 
     // —— 插值方式 ——
     int image_interpolation = cv::INTER_CUBIC;   ///< 图像回贴插值（16 邻域三次插值，放大更平滑）

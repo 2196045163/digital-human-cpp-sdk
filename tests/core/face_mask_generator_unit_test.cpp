@@ -290,9 +290,41 @@ int main() {
     EXPECT_TRUE(r16.info.non_zero_count > 0, "dilate=0: non_zero > 0");
 
     // ------------------------------------------------------------------
-    // 测试17: 数值范围始终保持 0~1
+    // 测试17: 默认 mask 参数正确（bbox 和 blur 已优化值）
     // ------------------------------------------------------------------
-    std::cout << "[17] Value range always 0~1 ...\n";
+    std::cout << "[17] Default mask options verify ...\n";
+    {
+        FaceMaskOptions def;
+        EXPECT_EQ(def.blur_kernel_size, 7, "default blur_kernel_size == 7");
+        EXPECT_TRUE(def.bbox_expand_x < 0.40f, "default bbox_expand_x reduced");
+        EXPECT_TRUE(def.bbox_expand_top < 0.60f, "default bbox_expand_top reduced");
+        EXPECT_TRUE(def.bbox_expand_bottom < 0.70f, "default bbox_expand_bottom reduced");
+        EXPECT_TRUE(def.use_convex_hull, "default use_convex_hull == true");
+        EXPECT_TRUE(def.limit_to_mouth_bbox, "default limit_to_mouth_bbox == true");
+        EXPECT_EQ(def.dilate_radius, 3, "default dilate_radius unchanged");
+        EXPECT_EQ(def.border_clear, 2, "default border_clear unchanged");
+    }
+
+    // ------------------------------------------------------------------
+    // 测试17b: 默认 mask 非空且尺寸类型正确（aligned 路径）
+    // ------------------------------------------------------------------
+    std::cout << "[17b] Default mask non-empty, correct size/type ...\n";
+    {
+        FaceMaskOptions def;
+        FaceMaskResult r = generator.GenerateAlignedMouthMask(
+            cv::Size(96, 96), fake_aligned_lm, def);
+        EXPECT_TRUE(r.success, "aligned default: success");
+        EXPECT_TRUE(!r.alpha_mask.empty(), "aligned default: non-empty");
+        EXPECT_EQ(r.alpha_mask.cols, 96, "aligned default: width == 96");
+        EXPECT_EQ(r.alpha_mask.rows, 96, "aligned default: height == 96");
+        EXPECT_TRUE(r.alpha_mask.type() == CV_32FC1, "aligned default: type CV_32FC1");
+        EXPECT_TRUE(r.info.non_zero_count > 0, "aligned default: non-zero pixels");
+    }
+
+    // ------------------------------------------------------------------
+    // 测试17c: 数值范围始终保持 0~1
+    // ------------------------------------------------------------------
+    std::cout << "[17c] Value range always 0~1 ...\n";
 
     EXPECT_NEAR(r2.info.min_value, 0.0, 0.01, "range: normal mask min >= 0");
     EXPECT_NEAR(r2.info.max_value, 1.0, 0.01, "range: normal mask max <= 1");

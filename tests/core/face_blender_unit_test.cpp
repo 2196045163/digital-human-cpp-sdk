@@ -236,7 +236,8 @@ int main() {
     cv::Mat mask_zero(512, 512, CV_32FC1, cv::Scalar(0.0f));
 
     FaceBlendOptions opt9;
-    opt9.enable_detail_restore = false;  // 关掉细节恢复，纯测 alpha 公式
+    opt9.enable_detail_restore = false;  // 关掉细节恢复和颜色匹配，纯测 alpha 公式
+    opt9.enable_color_match = false;
     FaceBlendResult r9 = blender.BlendWithDetail(base512, gen512, mask_zero, opt9);
     EXPECT_TRUE(r9.success, "mask=0: success == true");
     EXPECT_EQ(r9.status, FaceBlendStatus::kOk, "mask=0: kOk");
@@ -336,6 +337,78 @@ int main() {
     FaceBlendResult r16 = blender.BlendWithDetail(base_256, gen_512_bad, mask_256, opt9);
     EXPECT_TRUE(!r16.success, "mismatch: success == false");
     EXPECT_EQ(r16.status, FaceBlendStatus::kSizeMismatch, "mismatch: kSizeMismatch");
+
+    // ------------------------------------------------------------------
+    // 测试 17a: BlendWithDetail — enable_color_match 产生与禁用时不同的输出
+    // ------------------------------------------------------------------
+    std::cout << "[17a] BlendWithDetail color_match enabled vs disabled ...\n";
+    {
+        cv::Mat mask_half(512, 512, CV_32FC3, cv::Scalar(0.5f, 0.5f, 0.5f));
+        FaceBlendOptions opt_on;
+        opt_on.enable_color_match = true;
+        FaceBlendResult r_on = blender.BlendWithDetail(base512, gen512, mask_half, opt_on);
+        EXPECT_TRUE(r_on.success, "cm-on: success");
+
+        FaceBlendOptions opt_off;
+        opt_off.enable_color_match = false;
+        FaceBlendResult r_off = blender.BlendWithDetail(base512, gen512, mask_half, opt_off);
+        EXPECT_TRUE(r_off.success, "cm-off: success");
+
+        // 开启与关闭颜色匹配的结果不应完全相同（mask 半透明时有效）
+        EXPECT_TRUE(!MatApproxEqual(r_on.final_bgr, r_off.final_bgr, 0),
+                    "color match on/off should differ");
+    }
+
+    // ------------------------------------------------------------------
+    // 测试 17b: BlendWithDetail — 零方差生成图不会崩溃（epsilon 防护）
+    // ------------------------------------------------------------------
+    std::cout << "[17b] BlendWithDetail zero-variance gen (epsilon safety) ...\n";
+    {
+        // 全 0.5 的生成图 → 各通道 std=0
+        cv::Mat gen_flat(512, 512, CV_8UC3, cv::Scalar(128, 128, 128));
+        cv::Mat mask_half(512, 512, CV_32FC3, cv::Scalar(0.5f, 0.5f, 0.5f));
+        FaceBlendOptions opt;
+        opt.enable_color_match = true;
+        FaceBlendResult r = blender.BlendWithDetail(base512, gen_flat, mask_half, opt);
+        EXPECT_TRUE(r.success, "flat-gen: success");
+        EXPECT_EQ(r.status, FaceBlendStatus::kOk, "flat-gen: kOk");
+        // 不应产生 NaN 或崩溃，输出应仍在合法范围
+        EXPECT_TRUE(!r.final_bgr.empty(), "flat-gen: non-empty output");
+    }
+
+    // ------------------------------------------------------------------
+    // 测试 17c: BlendWithDetail — 空 mask 安全回退
+    // ------------------------------------------------------------------
+    std::cout << "[17c] BlendWithDetail nearly-empty mask ...\n";
+    {
+        cv::Mat mask_tiny(512, 512, CV_32FC3, cv::Scalar(0.001f, 0.001f, 0.001f));
+        FaceBlendOptions opt;
+        opt.enable_color_match = true;
+        FaceBlendResult r = blender.BlendWithDetail(base512, gen512, mask_tiny, opt);
+        EXPECT_TRUE(r.success, "tiny-mask: success");
+        EXPECT_EQ(r.status, FaceBlendStatus::kOk, "tiny-mask: kOk");
+    }
+
+    // ------------------------------------------------------------------
+    // 测试 17d: BlendWithDetail — mask 外区域不被颜色匹配修改
+    // ------------------------------------------------------------------
+    std::cout << "[17d] BlendWithDetail external pixels unchanged ...\n";
+    {
+        // mask 只在右下角 1/4 区域有效
+        cv::Mat mask_quarter = cv::Mat::zeros(512, 512, CV_32FC3);
+        mask_quarter(cv::Rect(256, 256, 256, 256)) = cv::Scalar(1.0f, 1.0f, 1.0f);
+        FaceBlendOptions opt;
+        opt.enable_color_match = true;
+        FaceBlendResult r = blender.BlendWithDetail(base512, gen512, mask_quarter, opt);
+        EXPECT_TRUE(r.success, "quarter-mask: success");
+
+        // mask 外区域（左上角）应等于 base（无 mask=0 区域不融合 gen）
+        cv::Rect corner(0, 0, 100, 100);
+        cv::Mat corner_before = base512(corner).clone();
+        cv::Mat corner_after = r.final_bgr(corner).clone();
+        double diff = cv::norm(corner_before, corner_after, cv::NORM_INF);
+        EXPECT_TRUE(diff < 1.0, "external pixels should be unchanged");
+    }
 
     // ------------------------------------------------------------------
     // 测试 17: RestoreMaskToOriginal — 打开羽化后 mask 边缘应被柔化

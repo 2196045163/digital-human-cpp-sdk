@@ -299,6 +299,47 @@ struct FaceBlender::Impl {
         restored_face_bgr.convertTo(gen_f, CV_32FC3, 1.0 / 255.0);
         // mask_f 已经是 CV_32FC3, 0~1，无需转换
 
+        // 局部颜色匹配：对 generated patch 在 mask 区域内做分通道均值-标准差匹配。
+        // 目的：Wav2Lip 模型生成的 96×96 纹理与原图皮肤常有色差和亮度差，
+        // 简单 alpha blend 不能纠正这种差异，导致可见的"贴片"边界。
+        // 本段在融合前对 gen 做局部颜色归一化，减轻色差，改善融合自然度。
+        // 限制：这只改善颜色一致性，不能恢复 96×96 模型输出经上采样后损失的细节。
+        if (options.enable_color_match) {
+            const float kEpsilon = 1e-6f;  // 防止 std=0 时除零
+            // mask_f 是 CV_32FC3，只取第一通道做统计（三通道 alpha 值相同）
+            std::vector<cv::Mat> mask_chs;
+            cv::split(mask_f, mask_chs);
+            cv::Mat mask_active = mask_chs[0] > 0.01f;  // CV_8UC1
+
+            // 只在 mask 有效像素足够时执行匹配，避免统计量不稳定
+            if (cv::countNonZero(mask_active) >= 4) {
+                std::vector<cv::Mat> base_chs, gen_chs;
+                cv::split(base_f, base_chs);
+                cv::split(gen_f, gen_chs);
+
+                std::vector<cv::Mat> corrected_chs(3);
+                for (int ch = 0; ch < 3; ++ch) {
+                    cv::Scalar base_mean_scalar, base_std_scalar;
+                    cv::Scalar gen_mean_scalar, gen_std_scalar;
+                    cv::meanStdDev(base_chs[ch], base_mean_scalar, base_std_scalar, mask_active);
+                    cv::meanStdDev(gen_chs[ch], gen_mean_scalar, gen_std_scalar, mask_active);
+
+                    float base_mean = static_cast<float>(base_mean_scalar[0]);
+                    float base_std = static_cast<float>(base_std_scalar[0]);
+                    float gen_mean = static_cast<float>(gen_mean_scalar[0]);
+                    float gen_std = static_cast<float>(gen_std_scalar[0]);
+
+                    // 分通道颜色匹配：使 gen 的均值和标准差对齐 base
+                    float scale = base_std / std::max(gen_std, kEpsilon);
+                    corrected_chs[ch] = (gen_chs[ch] - gen_mean) * scale + base_mean;
+                    // 限制到合法像素范围 [0, 1]
+                    cv::threshold(corrected_chs[ch], corrected_chs[ch], 0.0, 0.0, cv::THRESH_TOZERO);
+                    cv::threshold(corrected_chs[ch], corrected_chs[ch], 1.0, 1.0, cv::THRESH_TRUNC);
+                }
+                cv::merge(corrected_chs, gen_f);
+            }
+        }
+
         // 4. alpha 融合（核心公式）
         //    out = gen × mask + base × (1 − mask)
         //    mul() 是逐像素乘法，Scalar(1,1,1)−mask 对 B/G/R 三通道分别做 1−mask
