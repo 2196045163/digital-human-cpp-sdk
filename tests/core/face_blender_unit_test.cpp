@@ -377,6 +377,70 @@ int main() {
     }
 
     // ------------------------------------------------------------------
+    // 测试 17b2: clamped color matching does not worsen masked mean difference
+    //            Codex 反例：base=[5×0,5×255], gen=[9×113,1×255], mask 全有效。
+    //            clamp 可能使校正后均值比校正前更偏离 base，本测试验证非恶化保护生效。
+    // ------------------------------------------------------------------
+    std::cout << "[17b2] Codex counter-example: clamp does not worsen mean diff ...\n";
+    {
+        // 构造 Codex 反例输入：10 像素 × 1 行，每通道值相同
+        cv::Mat base_10(1, 10, CV_8UC3);
+        cv::Mat gen_10(1, 10, CV_8UC3);
+        for (int i = 0; i < 10; ++i) {
+            unsigned char bv = (i < 5) ? 0 : 255;
+            unsigned char gv = (i < 9) ? 113 : 255;
+            base_10.at<cv::Vec3b>(0, i) = cv::Vec3b(bv, bv, bv);
+            gen_10.at<cv::Vec3b>(0, i)  = cv::Vec3b(gv, gv, gv);
+        }
+        cv::Mat mask_full(1, 10, CV_32FC3, cv::Scalar(1.0f, 1.0f, 1.0f));
+
+        FaceBlendOptions opt;
+        opt.enable_color_match = true;
+        opt.enable_detail_restore = false;
+
+        FaceBlendResult r = blender.BlendWithDetail(base_10, gen_10, mask_full, opt);
+        EXPECT_TRUE(r.success, "codex: success");
+
+        // 在 mask 区域内计算校正前后的每通道均值误差
+        cv::Mat base_f, gen_f;
+        base_10.convertTo(base_f, CV_32FC3, 1.0 / 255.0);
+        gen_10.convertTo(gen_f, CV_32FC3, 1.0 / 255.0);
+        cv::Mat result_f;
+        r.final_bgr.convertTo(result_f, CV_32FC3, 1.0 / 255.0);
+
+        cv::Mat mask_active = mask_full > 0.01f;
+        // 取第一通道作为统计 mask
+        std::vector<cv::Mat> mch;
+        cv::split(mask_active, mch);
+
+        for (int ch = 0; ch < 3; ++ch) {
+            std::vector<cv::Mat> bch, gch, rch;
+            cv::split(base_f, bch);
+            cv::split(gen_f, gch);
+            cv::split(result_f, rch);
+
+            cv::Scalar bm, gmm, rm;
+            cv::meanStdDev(bch[ch], bm, cv::noArray(), mch[0]);
+            cv::meanStdDev(gch[ch], gmm, cv::noArray(), mch[0]);
+            cv::meanStdDev(rch[ch], rm, cv::noArray(), mch[0]);
+
+            float before_err = std::abs(static_cast<float>(gmm[0] - bm[0]));
+            float after_err  = std::abs(static_cast<float>(rm[0] - bm[0]));
+
+            // 校正后误差不得大于校正前（允许 1/255 量化容差）
+            EXPECT_TRUE(after_err <= before_err + 1.5f / 255.0f,
+                        ("ch=" + std::to_string(ch) + " after_err should not exceed before_err").c_str());
+        }
+
+        // 基本契约：无 NaN，尺寸/类型/通道不变
+        EXPECT_TRUE(!r.final_bgr.empty(), "codex: non-empty");
+        EXPECT_EQ(r.final_bgr.cols, 10, "codex: cols unchanged");
+        EXPECT_EQ(r.final_bgr.rows, 1, "codex: rows unchanged");
+        EXPECT_EQ(r.final_bgr.type(), CV_8UC3, "codex: type unchanged");
+        EXPECT_EQ(r.final_bgr.channels(), 3, "codex: channels unchanged");
+    }
+
+    // ------------------------------------------------------------------
     // 测试 17c: BlendWithDetail — 空 mask 安全回退
     // ------------------------------------------------------------------
     std::cout << "[17c] BlendWithDetail nearly-empty mask ...\n";

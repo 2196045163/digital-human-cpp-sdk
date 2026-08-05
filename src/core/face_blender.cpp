@@ -317,6 +317,7 @@ struct FaceBlender::Impl {
                 cv::split(base_f, base_chs);
                 cv::split(gen_f, gen_chs);
 
+                const float kMeanDegradationTolerance = 1e-6f;
                 std::vector<cv::Mat> corrected_chs(3);
                 for (int ch = 0; ch < 3; ++ch) {
                     cv::Scalar base_mean_scalar, base_std_scalar;
@@ -329,12 +330,27 @@ struct FaceBlender::Impl {
                     float gen_mean = static_cast<float>(gen_mean_scalar[0]);
                     float gen_std = static_cast<float>(gen_std_scalar[0]);
 
+                    float before_error = std::abs(gen_mean - base_mean);
+
                     // 分通道颜色匹配：使 gen 的均值和标准差对齐 base
                     float scale = base_std / std::max(gen_std, kEpsilon);
-                    corrected_chs[ch] = (gen_chs[ch] - gen_mean) * scale + base_mean;
+                    cv::Mat corrected = (gen_chs[ch] - gen_mean) * scale + base_mean;
                     // 限制到合法像素范围 [0, 1]
-                    cv::threshold(corrected_chs[ch], corrected_chs[ch], 0.0, 0.0, cv::THRESH_TOZERO);
-                    cv::threshold(corrected_chs[ch], corrected_chs[ch], 1.0, 1.0, cv::THRESH_TRUNC);
+                    cv::threshold(corrected, corrected, 0.0, 0.0, cv::THRESH_TOZERO);
+                    cv::threshold(corrected, corrected, 1.0, 1.0, cv::THRESH_TRUNC);
+
+                    // 非恶化保护：clamp 后重新计算均值，若校正在有效 mask 内使均值更偏离 base，
+                    // 则对该通道回退到原始 generated 值，避免"越校正越差"。
+                    cv::Scalar corrected_mean_scalar, _;
+                    cv::meanStdDev(corrected, corrected_mean_scalar, _, mask_active);
+                    float corrected_mean = static_cast<float>(corrected_mean_scalar[0]);
+                    float after_error = std::abs(corrected_mean - base_mean);
+
+                    if (after_error > before_error + kMeanDegradationTolerance) {
+                        corrected_chs[ch] = gen_chs[ch].clone();  // 回退到校正前
+                    } else {
+                        corrected_chs[ch] = corrected;
+                    }
                 }
                 cv::merge(corrected_chs, gen_f);
             }
