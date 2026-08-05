@@ -1,0 +1,47 @@
+# Prerequisites
+*.d
+*.test
+*.install
+*.o
+*.obj
+build/
+build-*/
+out/
+.vscode/
+.DS_Store
+*.lib
+*.a
+*.so
+*.dll
+
+# 测试运行时生成的临时文件
+test_loadfromfile_*
+test_space*
+
+# 模型文件（太大，不适合 git）
+models/*.dat
+/models/**/*.bin
+models/*
+
+# 生成的输出图
+*.jpg
+*.png
+*.wav
+*.mp4
+
+# 模块文档（本地学习笔记已在公开仓库中排除；docs/ 仅包含公开架构文档）
+
+# 测试文件和测试输出文件
+testdata/
+golden_output/
+
+#
+debug_load_model
+
+debug_load_model.cpp
+
+executor
+
+test_imread.cpp
+# 基准运行原始日志
+logs/
