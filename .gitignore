@@ -46,3 +46,7 @@ executor
 test_imread.cpp
 # M05 基准运行原始日志（evidence，不推送）
 logs/
+
+# 输入输出文件
+inputs/
+outputs/
