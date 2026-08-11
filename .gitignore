@@ -45,3 +45,7 @@ executor
 test_imread.cpp
 # 基准运行原始日志
 logs/
+
+# 输入输出文件
+inputs/
+outputs/

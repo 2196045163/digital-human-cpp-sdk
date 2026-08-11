@@ -1,73 +1,73 @@
-# Digital Human SDK (C++)
+# Digital Human SDK（C++）
 
-A C++ inference pipeline for speech-driven facial animation, built around the
-Wav2Lip model. The SDK takes a static face image and an audio clip, and produces
-a lip-synchronized MP4 video through a fully offline processing pipeline.
+这是一个基于 C++ 的语音驱动人脸动画推理 SDK，核心模型为 Wav2Lip。SDK 输入一张静态人脸图片和一段音频，通过完全离线的处理流程生成口型与语音同步的 MP4 视频。
 
-## Architecture Overview
+## 架构概览
 
-The system is organized as a layered C++17 library with the following structure:
+项目按照分层的 C++17 库进行组织，目录结构如下：
 
-```
-include/          Public API headers (28 headers across 8 modules)
-src/              Core implementation (24 C++ source files)
-apps/             CLI application entry point
-tests/            Unit tests (GoogleTest, 21 test files)
-docs/             Architecture and design documentation
+```text
+include/          公共 API 头文件（8 个模块，共 28 个头文件）
+src/              核心实现（24 个 C++ 源文件）
+apps/             CLI 应用程序入口
+tests/            单元测试（GoogleTest，共 21 个测试文件）
+docs/             架构与设计文档
 ```
 
-For a detailed pipeline diagram, see [docs/architecture.md](docs/architecture.md).
+更详细的 Pipeline 流程图请参见 [docs/architecture.md](docs/architecture.md)。
 
-## Core Modules
+## 核心模块
 
-| Module | Directory | Description |
+| 模块 | 目录 | 功能 |
 |---|---|---|
-| **Audio** | `include/audio/`, `src/audio/` | Audio loading (FFmpeg), resampling to 16kHz, PCM framing, Mel spectrogram extraction |
-| **Core** | `include/core/`, `src/core/` | Face detection (dlib HOG + SVM), dlib 68-point landmarks, face alignment, image I/O, mask generation, mouth restoration and blending |
-| **Model** | `include/model/`, `src/model/` | ncnn model loading, Wav2Lip input construction, batched inference scheduling, output post-processing |
-| **Pipeline** | `include/pipeline/`, `src/pipeline/` | End-to-end orchestration, bounded task queues, multi-threaded producer-consumer pipeline |
-| **Output** | `include/output/`, `src/output/` | FFmpeg-based H.264/AAC MP4 encoding and muxing (FinalMediaWriter) |
-| **Sync** | `include/sync/`, `src/sync/` | Audio-video synchronization, PortAudio playback, audio master clock |
+| **Audio** | `include/audio/`, `src/audio/` | 音频加载（FFmpeg）、重采样到 16 kHz、PCM 分帧、Mel 频谱提取 |
+| **Core** | `include/core/`, `src/core/` | 人脸检测（dlib HOG + SVM）、dlib 68 点关键点定位、人脸对齐、图像 I/O、Mask 生成、嘴部区域恢复与融合 |
+| **Model** | `include/model/`, `src/model/` | ncnn 模型加载、Wav2Lip 输入构造、批量推理调度、输出后处理 |
+| **Pipeline** | `include/pipeline/`, `src/pipeline/` | 端到端流程调度、有界任务队列、多线程生产者-消费者 Pipeline |
+| **Output** | `include/output/`, `src/output/` | 基于 FFmpeg 的 H.264/AAC 编码与 MP4 封装（FinalMediaWriter） |
+| **Sync** | `include/sync/`, `src/sync/` | 音视频同步、PortAudio 播放、音频主时钟 |
 
-## Complete Processing Pipeline
+## 完整处理流程
 
-1. **Audio decoding & resampling** — Input audio (any FFmpeg-supported format) is decoded and resampled to 16 kHz mono PCM.
-2. **Mel spectrogram extraction** — 80-bin Mel spectrogram computed with Wav2Lip-compatible parameters (n_fft=800, fmin=55 Hz, fmax=7600 Hz), sliced into 16-frame chunks.
-3. **Face detection & landmarks** — dlib HOG + SVM frontal face detector locates the face; dlib shape_predictor extracts 68-point facial landmarks.
-4. **Image preprocessing** — Face is aligned and cropped to 96×96 using similarity transform; lower-half mask is applied for Wav2Lip's six-channel input. OpenCV is used for image loading, resize, color conversion, and matrix operations.
-5. **ncnn Wav2Lip inference** — The six-channel face input and Mel spectrogram chunk are fed to the ncnn inference engine.
-6. **Mouth restoration & blending** — The 96×96 generated face is restored to the original image coordinates through local color matching within the mask region, alpha blending, and optional lightweight high-frequency detail recovery from the original image.
-7. **FFmpeg H.264/AAC muxing** — Video frames and audio are encoded and muxed into an MP4 container.
+1. **音频解码与重采样** —— 将输入音频（FFmpeg 支持的格式）解码并统一重采样为 16 kHz 单声道 PCM。
+2. **Mel 频谱提取** —— 使用与 Wav2Lip 兼容的参数（`n_fft=800`、`fmin=55 Hz`、`fmax=7600 Hz`）计算 80 维 Mel 频谱，并切分为连续 16 个时间步的 Mel chunk。
+3. **人脸检测与关键点定位** —— 使用 dlib HOG + SVM 正面人脸检测器定位人脸，并通过 dlib `shape_predictor` 提取 68 点人脸关键点。
+4. **图像预处理** —— 通过相似变换完成人脸对齐，并裁剪为 `96×96`；对下半脸区域施加 Mask，用于构造 Wav2Lip 所需的六通道人脸输入。OpenCV 用于图像加载、缩放、颜色转换和矩阵运算。
+5. **ncnn Wav2Lip 推理** —— 将六通道人脸输入与 Mel chunk 一同送入 ncnn 推理引擎。
+6. **嘴部恢复与图像融合** —— 将生成的 `96×96` 人脸结果恢复到原始图像坐标，并在 Mask 区域内进行局部颜色匹配、Alpha 融合，同时可选地恢复原图中的轻量高频细节。
+7. **FFmpeg H.264/AAC 封装** —— 将视频帧编码为 H.264、音频编码为 AAC，并封装为 MP4 文件。
 
-## Technology Stack
+## 技术栈
 
-| Component | Role |
+| 组件 | 用途 |
 |---|---|
-| C++17 | Core language |
-| CMake 3.16+ | Build system |
-| [ncnn](https://github.com/Tencent/ncnn) | Neural network inference |
-| [FFmpeg](https://ffmpeg.org/) | Audio decode, video/audio encode, MP4 mux |
-| [OpenCV](https://opencv.org/) | Image loading, resize, color conversion, matrix operations, mask generation, mouth blending |
-| [dlib](http://dlib.net/) | Face detection (HOG + SVM) and landmark detection (68-point shape_predictor) |
-| [PortAudio](http://www.portaudio.com/) | Audio playback (experimental component) |
-| [GoogleTest](https://github.com/google/googletest) | Unit testing |
-| OpenMP | CPU parallelism |
+| C++17 | 核心开发语言 |
+| CMake 3.16+ | 构建系统 |
+| [ncnn](https://github.com/Tencent/ncnn) | 神经网络推理 |
+| [FFmpeg](https://ffmpeg.org/) | 音频解码、音视频编码、MP4 封装 |
+| [OpenCV](https://opencv.org/) | 图像加载、缩放、颜色转换、矩阵运算、Mask 生成、嘴部融合 |
+| [dlib](http://dlib.net/) | 人脸检测（HOG + SVM）和 68 点关键点定位（shape_predictor） |
+| [PortAudio](http://www.portaudio.com/) | 音频播放（实验性组件） |
+| [GoogleTest](https://github.com/google/googletest) | 单元测试 |
+| OpenMP | CPU 并行计算 |
 
-## Supported Input / Output Formats
+## 支持的输入 / 输出格式
 
-**Input:**
-- Image: JPEG, PNG, BMP (single static face portrait, recommended 512×512)
-- Audio: WAV, MP3, AAC, M4A, MP4, FLAC (format detection is extension-based; decoding is performed by FFmpeg)
+**输入：**
 
-**Output:**
-- Container: MP4
-- Video: H.264, 25 FPS
-- Audio: AAC, 16 kHz mono
-- Resolution: Configurable (default matches input image dimensions)
+- 图像：JPEG、PNG、BMP（单张静态人脸图片，推荐 `512×512`）
+- 音频：WAV、MP3、AAC、M4A、MP4、FLAC（通过文件扩展名判断格式，由 FFmpeg 完成解码）
 
-## Build Dependencies
+**输出：**
 
-Required system packages (Ubuntu 22.04 example):
+- 容器：MP4
+- 视频：H.264，25 FPS
+- 音频：AAC，16 kHz 单声道
+- 分辨率：可配置，默认与输入图片尺寸一致
+
+## 构建依赖
+
+以下为 Ubuntu 22.04 下所需的系统依赖示例：
 
 ```bash
 sudo apt install -y \
@@ -80,7 +80,8 @@ sudo apt install -y \
     libgtest-dev
 ```
 
-ncnn must be built from source or installed via package manager:
+ncnn 需要从源码构建或通过包管理器安装：
+
 ```bash
 git clone https://github.com/Tencent/ncnn.git
 cd ncnn && mkdir build && cd build
@@ -88,28 +89,26 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j$(nproc) && sudo make install
 ```
 
-To specify a custom ncnn installation path:
+如果需要指定自定义 ncnn 安装路径：
 
 ```bash
 cmake .. -Dncnn_DIR=/path/to/ncnn/lib/cmake/ncnn
-# or:
+# 或：
 cmake .. -DCMAKE_PREFIX_PATH=/path/to/ncnn/install
 ```
 
-## Model Files
+## 模型文件
 
-**Model weights are not provided in this repository.** The following files must
-be obtained separately by the user:
+**本仓库不提供模型权重。** 以下文件需要由用户自行获取：
 
-| File | Description | Source |
+| 文件 | 说明 | 来源 |
 |---|---|---|
-| `wav2lip.param` / `wav2lip.bin` | Wav2Lip model in ncnn format | Convert from original Wav2Lip PyTorch weights |
-| `shape_predictor_68_face_landmarks.dat` | dlib 68-point landmark model | [dlib model repository](http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2) |
+| `wav2lip.param` / `wav2lip.bin` | ncnn 格式的 Wav2Lip 模型 | 由原始 Wav2Lip PyTorch 权重转换 |
+| `shape_predictor_68_face_landmarks.dat` | dlib 68 点人脸关键点模型 | [dlib 模型仓库](http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2) |
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for licensing information
-regarding the Wav2Lip model.
+关于 Wav2Lip 模型的许可信息，请参见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-## Basic Build
+## 基础构建
 
 ```bash
 mkdir build && cd build
@@ -117,59 +116,56 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
-Build options:
-- `BUILD_TESTS=ON/OFF` — Enable/disable unit tests (default: ON)
-- `BUILD_EXAMPLES=ON/OFF` — Enable/disable example programs (default: ON)
-- `USE_MARCH_NATIVE=ON/OFF` — Enable `-march=native` for host-specific instruction sets (default: OFF)
-- `ENABLE_ASAN=ON` — Enable AddressSanitizer
-- `ENABLE_TSAN=ON` — Enable ThreadSanitizer
+构建选项：
 
-## CLI Usage
+- `BUILD_TESTS=ON/OFF` —— 启用 / 禁用单元测试，默认开启
+- `BUILD_EXAMPLES=ON/OFF` —— 启用 / 禁用示例程序，默认开启
+- `USE_MARCH_NATIVE=ON/OFF` —— 为当前主机启用 `-march=native` 指令集优化，默认关闭
+- `ENABLE_ASAN=ON` —— 启用 AddressSanitizer
+- `ENABLE_TSAN=ON` —— 启用 ThreadSanitizer
 
-The CLI supports offline mode only. Real-time mode is explicitly rejected
-with exit code 3.
+## CLI 使用方法
+
+CLI 当前仅支持离线模式。实时模式会被明确拒绝，并返回退出码 `3`。
 
 ```bash
 ./build/bin/digital_human_app \
-    --image      path/to/face.jpg \
-    --audio      path/to/speech.wav \
+    --image        path/to/face.jpg \
+    --audio        path/to/speech.wav \
     --model-param  path/to/wav2lip.param \
     --model-bin    path/to/wav2lip.bin \
     --landmark     path/to/shape_predictor_68_face_landmarks.dat \
-    --output     output.mp4 \
+    --output       output.mp4 \
     --fps 25
 ```
 
-The CLI performs a four-condition success check on completion:
-1. Pipeline completes without error
-2. Media writer is finalized
-3. No writer error recorded
-4. Output file exists and is non-empty
+CLI 完成后会检查以下四个成功条件：
 
-On success, a JSON result with pipeline statistics is printed to stdout and the
-process exits with code 0.
+1. Pipeline 正常完成且没有错误；
+2. Media Writer 完成 finalize；
+3. 没有记录 Writer 错误；
+4. 输出文件存在且非空。
 
-## Performance
+执行成功后，程序会向标准输出打印包含 Pipeline 统计信息的 JSON，并以退出码 `0` 结束。
 
-*Measured on a 2-logical-core Ubuntu 22.04 virtual machine.*
+## 性能
 
-These figures were collected from the full development repository using fixed
-input benchmarks; model weights and test assets are not provided in this
-public snapshot.
+*测试环境：Ubuntu 22.04 虚拟机，2 个逻辑 CPU 核心。*
 
-| Metric | Value |
+以下数据来自完整开发仓库中的固定输入基准测试。模型权重和测试素材未包含在当前公开仓库快照中。
+
+| 指标 | 数值 |
 |---|---|
-| Input image | 512×512 static portrait |
-| Input audio | 8.136 seconds, 16 kHz mono |
-| Output | 512×512, 25 FPS, 204 frames, H.264/AAC MP4 |
-| Average total wall time | 16.51 seconds |
-| Average processing speed | 12.36 FPS |
-| Peak memory usage | ~666 MB |
+| 输入图像 | `512×512` 静态人像 |
+| 输入音频 | 8.136 秒，16 kHz 单声道 |
+| 输出 | `512×512`、25 FPS、204 帧、H.264/AAC MP4 |
+| 平均端到端耗时 | 16.51 秒 |
+| 平均处理速度 | 12.36 FPS |
+| 峰值内存占用 | 约 666 MB |
 
-*Note: Performance varies significantly with CPU core count, ncnn optimization
-flags, and input dimensions.*
+> 性能会受到 CPU 核心数量、ncnn 优化选项以及输入分辨率等因素的显著影响。
 
-## Testing
+## 测试
 
 ```bash
 mkdir build && cd build
@@ -178,67 +174,62 @@ make -j$(nproc)
 ctest --output-on-failure
 ```
 
-The test suite includes unit tests for audio processing, core image operations,
-model input construction, output writing, pipeline orchestration, and
-synchronization components. Tests that require model weights or test data files
-are excluded from this public repository (see [docs/testing.md](docs/testing.md)).
+测试集包含音频处理、核心图像操作、模型输入构造、媒体输出、Pipeline 调度和同步组件等模块的单元测试。
 
-## Known Limitations
+依赖模型权重或测试数据文件的测试未包含在公开仓库中，详见 [docs/testing.md](docs/testing.md)。
 
-- **Model-dependent**: The pipeline requires a Wav2Lip model in ncnn format. Model weights are not included and must be obtained by the user.
-- **Static portrait only**: The current implementation processes a single static face image; it does not support video input with changing backgrounds or multiple faces.
-- **Offline processing**: The CLI supports offline batch processing only. The codebase includes experimental audio-video synchronization and PortAudio playback components, but the public CLI explicitly rejects real-time mode.
-- **Single model architecture**: The pipeline is built around the Wav2Lip model input/output contract; using other lip-sync models requires modifications to the model spec and input builder.
-- **Platform support**: Developed and tested on Linux (Ubuntu 22.04). Windows and macOS may require adjustments to the build configuration and FFmpeg/PortAudio integration.
-- **Face detection**: The dlib HOG + SVM frontal face detector works well for frontal faces but may miss faces at extreme angles or under poor lighting, and may produce false positives on non-face objects.
+## 已知限制
 
-## Third-Party Licenses
+- **依赖模型文件**：Pipeline 需要 ncnn 格式的 Wav2Lip 模型。本仓库不包含模型权重，需要用户自行获取。
+- **仅支持静态人像**：当前实现处理单张静态人脸图片，不支持背景变化的视频输入，也不支持多人脸处理。
+- **仅支持离线处理**：CLI 仅支持离线批处理。代码库包含实验性的音视频同步和 PortAudio 播放组件，但公开 CLI 会明确拒绝实时模式。
+- **单一模型架构**：Pipeline 基于 Wav2Lip 的输入 / 输出契约构建。如需使用其他口型同步模型，需要修改模型规格和输入构造逻辑。
+- **平台支持**：项目主要在 Linux（Ubuntu 22.04）下开发和测试。Windows 和 macOS 可能需要调整构建配置以及 FFmpeg / PortAudio 集成方式。
+- **人脸检测限制**：dlib HOG + SVM 正面人脸检测器对正面人脸效果较好，但在大角度侧脸、光照较差等情况下可能漏检，也可能对非人脸区域产生误检。
 
-This project integrates multiple third-party components. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for detailed information about
-each component's license and usage.
+## 第三方许可证
 
-**Important**: The Wav2Lip model and pretrained weights are released for
-personal, research, and non-commercial use only. Users must comply with the
-original Wav2Lip license terms.
+本项目集成了多个第三方组件。各组件的许可证及使用说明请参见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-## Project Structure
+**重要说明：** Wav2Lip 模型及其预训练权重仅允许用于个人、研究和非商业用途。用户必须遵守 Wav2Lip 原项目的许可证条款。
 
-```
+## 项目结构
+
+```text
 digital-human-cpp-sdk/
-├── CMakeLists.txt              Root build configuration
+├── CMakeLists.txt              根构建配置
 ├── README.md
 ├── THIRD_PARTY_NOTICES.md
-├── include/                    Public API headers
-│   ├── audio/                  Audio processing API
-│   ├── core/                   Image and face processing API
-│   ├── model/                  Model inference API
-│   ├── output/                 Media writer API
-│   ├── pipeline/               Pipeline orchestration API
-│   ├── sync/                   Synchronization and playback API
-│   ├── utils/                  Utilities
-│   └── video/                  Video frame types
-├── src/                        Implementation
+├── include/                    公共 API 头文件
+│   ├── audio/                  音频处理 API
+│   ├── core/                   图像与人脸处理 API
+│   ├── model/                  模型推理 API
+│   ├── output/                 媒体输出 API
+│   ├── pipeline/               Pipeline 调度 API
+│   ├── sync/                   同步与播放 API
+│   ├── utils/                  工具组件
+│   └── video/                  视频帧类型
+├── src/                        核心实现
 │   ├── audio/
 │   ├── core/
-│   ├── model/detail/           Internal model specs and helpers
+│   ├── model/detail/           模型内部规格与辅助组件
 │   ├── output/
-│   ├── pipeline/detail/        Internal pipeline components
+│   ├── pipeline/detail/        Pipeline 内部组件
 │   └── sync/
-├── apps/                       CLI application
-├── tests/                      Unit tests (model-independent subset)
-└── docs/                       Documentation
-    ├── architecture.md         Pipeline architecture diagram
-    └── testing.md              Test suite overview
+├── apps/                       CLI 应用程序
+├── tests/                      单元测试（不依赖模型的子集）
+└── docs/                       文档
+    ├── architecture.md         Pipeline 架构图
+    └── testing.md              测试套件说明
 ```
 
-## Project Scope
+## 项目定位
 
-This is a C++17 engineering example for offline static-portrait lip-sync
-generation. It demonstrates media processing (FFmpeg audio decode and
-resampling), image processing (OpenCV-based face alignment, mask generation,
-mouth-region blending), neural network inference integration (ncnn), and
-audio/video encoding and muxing (FFmpeg H.264/AAC MP4).
+这是一个基于 C++17 的离线静态人像口型同步工程示例，展示了以下完整技术链路：
 
-Model weights and test media are not distributed with this repository.
-This public repository does not accept model weight submissions.
+- 使用 FFmpeg 完成音频解码和重采样；
+- 使用 OpenCV / dlib 完成人脸与图像处理；
+- 使用 ncnn 集成 Wav2Lip 神经网络推理；
+- 使用 FFmpeg 完成 H.264/AAC 编码和 MP4 封装。
+
+本仓库不分发模型权重和测试媒体文件，也不接受模型权重提交。

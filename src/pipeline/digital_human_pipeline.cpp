@@ -23,6 +23,7 @@
 #include "audio/audio_loader.h"
 #include "audio/audio_mel_feature_extract.h"
 #include "audio/audio_preprocessor.h"
+#include "core/face_aligner.h"
 #include "core/face_blender.h"
 #include "core/face_detector.h"
 #include "core/face_mask_generator.h"
@@ -226,15 +227,15 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
         return result;
     }
 
-    // ---- 5. PrepareFace（使用 Wav2LipInputBuilder） ----
-    model::Wav2LipInputBuilder input_builder;
-    auto face_prepare = input_builder.PrepareFace(
+    // ---- 5. FaceAligner：原图坐标系 -> Wav2Lip 96x96 对齐坐标系 ----
+    core::FaceAligner face_aligner;
+    auto alignment = face_aligner.Align(
         source_bgr,
         best_landmark.face_rect,
         best_landmark.landmarks);
-    if (!face_prepare.success) {
+    if (!alignment.success) {
         result.error_code = PipelineErrorCode::kFacePrepareFailed;
-        result.error_message = "PrepareFace 失败：" + face_prepare.error_message;
+        result.error_message = "FaceAligner 失败：" + alignment.error_message;
         return result;
     }
 
@@ -242,7 +243,7 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
     core::FaceMaskGenerator mask_gen;
     auto mask_result = mask_gen.GenerateAlignedMouthMask(
         cv::Size(96, 96),
-        face_prepare.value.landmarks_96);
+        alignment.aligned_landmarks);
     if (!mask_result.success) {
         result.error_code = PipelineErrorCode::kMaskGenerateFailed;
         result.error_message = "Mask 生成失败：" + mask_result.error_message;
@@ -252,12 +253,12 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
     // ---- 7. 构建不可变人脸上下文 ----
     auto face_ctx = std::make_shared<PreparedFaceContext>();
     face_ctx->source_bgr = source_bgr;
-    face_ctx->prepared_face_bgr = face_prepare.value.face_bgr;
+    face_ctx->prepared_face_bgr = alignment.aligned_face;
     face_ctx->mask = mask_result.alpha_mask;
-    face_ctx->source_crop_rect = face_prepare.value.source_crop_rect;
-    face_ctx->transform = face_prepare.value.transform;
-    face_ctx->inverse_transform = face_prepare.value.inverse_transform;
-    face_ctx->landmarks_96 = face_prepare.value.landmarks_96;
+    face_ctx->source_crop_rect = alignment.source_face_rect;
+    face_ctx->transform = alignment.transform;
+    face_ctx->inverse_transform = alignment.inverse_transform;
+    face_ctx->landmarks_96 = alignment.aligned_landmarks;
     face_ctx->original_size = source_bgr.size();
     face_ctx->original_landmarks = best_landmark.landmarks;
     prepare_ctx->face_ctx = face_ctx;
