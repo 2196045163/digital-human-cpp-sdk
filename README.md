@@ -32,7 +32,7 @@ docs/             架构与设计文档
 1. **音频解码与重采样** —— 将输入音频（FFmpeg 支持的格式）解码并统一重采样为 16 kHz 单声道 PCM。
 2. **Mel 频谱提取** —— 使用与 Wav2Lip 兼容的参数（`n_fft=800`、`fmin=55 Hz`、`fmax=7600 Hz`）计算 80 维 Mel 频谱，并切分为连续 16 个时间步的 Mel chunk。
 3. **人脸检测与关键点定位** —— 使用 dlib HOG + SVM 正面人脸检测器定位人脸，并通过 dlib `shape_predictor` 提取 68 点人脸关键点。
-4. **图像预处理** —— 通过相似变换完成人脸对齐，并裁剪为 `96×96`；对下半脸区域施加 Mask，用于构造 Wav2Lip 所需的六通道人脸输入。OpenCV 用于图像加载、缩放、颜色转换和矩阵运算。
+4. **图像预处理** —— 按人脸检测框直接裁剪并在底部保留 10 像素 padding，再缩放为 `96×96`；对下半脸区域施加 Mask，用于构造 Wav2Lip 所需的六通道人脸输入。OpenCV 用于图像加载、缩放、颜色转换和矩阵运算。
 5. **ncnn Wav2Lip 推理** —— 将六通道人脸输入与 Mel chunk 一同送入 ncnn 推理引擎。
 6. **嘴部恢复与图像融合** —— 将生成的 `96×96` 人脸结果恢复到原始图像坐标，并在 Mask 区域内进行局部颜色匹配、Alpha 融合，同时可选地恢复原图中的轻量高频细节。
 7. **FFmpeg H.264/AAC 封装** —— 将视频帧编码为 H.264、音频编码为 AAC，并封装为 MP4 文件。
@@ -150,7 +150,66 @@ CLI 完成后会检查以下四个成功条件：
 
 ## 性能
 
-*测试环境：Ubuntu 22.04 虚拟机，2 个逻辑 CPU 核心。*
+### 正式测试方法
+
+当前正式性能对比统一使用 `512×512`、30 FPS 和固定真实输入。模型权重与测试素材不包含在公开仓库快照中。
+
+| 项目 | 配置 |
+|---|---|
+| OS | Ubuntu 26.04 LTS / WSL2 |
+| CPU | AMD Ryzen 5 9600X 6-Core Processor |
+| CPU 核心 | 6 physical cores / 12 logical CPUs |
+| Compiler | GNU 15.2.0 |
+| Build Type | Release |
+| Backend | ncnn CPU |
+| FFmpeg | 4.4.2 |
+| 输入 | 固定真实 `testdata/input/face.jpg` + `testdata/input/real_voice_test.wav` |
+| 输出 | `512×512`、30 FPS、1816 帧 |
+| 测试轮数 | 每组 5 轮 |
+
+每轮 benchmark 使用独立子进程，重新创建 Pipeline/runtime、重新加载模型，并完整执行图像与音频读取、1816 帧生成、MP4 编码及收尾。端到端耗时覆盖一次完整任务开始到 MP4 写完；模型推理耗时只累计 Wav2Lip 模型前向推理，不包含人脸检测、Mel 处理、融合和视频编码。
+
+Peak RSS 使用 Linux/WSL 的 `getrusage(RUSAGE_SELF).ru_maxrss` 测量，原始 KB 值除以 1024 换算为 MB。每轮独立子进程统计自己的 Peak RSS，该指标表示整个进程的峰值常驻内存。
+
+正式测试命令：
+
+```bash
+./build/bin/cpu_benchmark --runs 5 --fps 30 --threads 1
+./build/bin/cpu_benchmark --runs 5 --fps 30 --threads 6
+```
+
+### CPU 正式结果
+
+两组测试均为 5/5 成功，每轮 `total_frames=1816`、`inference_frames=1816`。
+
+| Metric | 1 Thread | 6 Threads | Change |
+|---|---:|---:|---:|
+| End-to-end time | 64.475 s | 36.703 s | -43.1% |
+| Avg model inference time | 33.231 ms/frame | 18.089 ms/frame | -45.6% |
+| Model inference throughput | 30.227 FPS | 55.316 FPS | +83.0% |
+| End-to-end throughput | 28.17 FPS | 49.48 FPS | +75.7% |
+| Peak RSS | 630.131 MB | 640.250 MB | +1.6% |
+
+两组结果均为 5 轮平均，且均为 `success=5/5`。30 FPS 对应约 33.33 ms/frame：单线程平均模型推理为 33.231 ms/frame，处于实时临界线附近，完整链路约 28.17 FPS，未达到 30 FPS 端到端实时；6 线程平均模型推理降至 18.089 ms/frame，完整链路约 49.48 FPS，明显超过 30 FPS 目标。
+
+### CPU 多线程优化范围
+
+- 6 线程版本只调整 ncnn 模型内部推理线程数；scheduler worker 仍为 1，没有多帧并行，也没有创建多个模型实例。
+- Wav2Lip 中卷积等计算密集型算子可以利用多个 CPU 核心并行执行；`ncnn_threads=6` 获得的是**单帧模型内部并行**收益。
+- 加速未达到 6 倍，主要受串行部分、线程调度与同步开销，以及缓存和内存带宽限制。
+- 模型推理变快后，前处理、融合和编码等非模型阶段在端到端耗时中的占比会上升。
+
+### 当前状态
+
+- CPU correctness baseline：完成
+- Wav2Lip 真实输入预处理问题：已修复（模型音频路径设置 `enable_normalize=false`；检测框直接裁剪并保留 bottom padding=10）
+- 30 FPS CPU single-thread baseline：完成
+- 30 FPS CPU 6-thread optimization：完成
+- CUDA GPU backend：后续工作，尚未完成
+
+### 历史性能数据（旧口径）
+
+以下为 README 原有的 Ubuntu 22.04、2 个逻辑 CPU 核心、25 FPS 基准，测试环境、输入和统计口径均不同，仅作为历史记录，不与当前正式 30 FPS 数据直接比较。
 
 以下数据来自完整开发仓库中的固定输入基准测试。模型权重和测试素材未包含在当前公开仓库快照中。
 
@@ -163,7 +222,7 @@ CLI 完成后会检查以下四个成功条件：
 | 平均处理速度 | 12.36 FPS |
 | 峰值内存占用 | 约 666 MB |
 
-> 性能会受到 CPU 核心数量、ncnn 优化选项以及输入分辨率等因素的显著影响。
+> 性能会受到 CPU 核心数量、ncnn 线程配置、输入分辨率和运行环境等因素的显著影响。当前正式对比基准为上文所列的 512×512 / 30 FPS 条件。
 
 ## 测试
 

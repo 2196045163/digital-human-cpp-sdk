@@ -184,3 +184,23 @@ target_link_libraries(audio_video_synchronous_unit_test
 gtest_discover_tests(audio_video_synchronous_unit_test
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     TEST_PREFIX "audio_video_synchronous.")
+
+# ============================================================================
+# Long-running CPU benchmark (built with tests, intentionally not registered in CTest)
+# ============================================================================
+
+set(CPU_BENCHMARK_MODEL_PARAM
+    "/mnt/d/VM_Shared/Project/digital_human/models/wav2lip/wav2lip.param"
+    CACHE FILEPATH "ncnn wav2lip.param used by cpu_benchmark")
+set(CPU_BENCHMARK_LANDMARK_MODEL
+    "/mnt/d/VM_Shared/Project/digital_human/digital_human-sdk/models/shape_predictor_68_face_landmarks.dat"
+    CACHE FILEPATH "dlib landmark model used by cpu_benchmark")
+
+add_executable(cpu_benchmark performance/cpu_benchmark.cpp)
+target_link_libraries(cpu_benchmark PRIVATE digital_human_core)
+target_compile_definitions(cpu_benchmark PRIVATE
+    DIGITAL_HUMAN_BENCHMARK_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    DIGITAL_HUMAN_BENCHMARK_MODEL_PARAM="${CPU_BENCHMARK_MODEL_PARAM}"
+    DIGITAL_HUMAN_BENCHMARK_LANDMARK_MODEL="${CPU_BENCHMARK_LANDMARK_MODEL}"
+    DIGITAL_HUMAN_BENCHMARK_COMPILER="${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}"
+    DIGITAL_HUMAN_BENCHMARK_BUILD_TYPE="${CMAKE_BUILD_TYPE}")

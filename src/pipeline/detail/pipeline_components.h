@@ -118,6 +118,7 @@ struct SharedState {
 
     // ---- 统计 ----
     PipelineStats stats;
+    std::chrono::steady_clock::time_point wall_start_time{};
 
     // ---- 帧计数器 ----
     std::atomic<std::int64_t> next_task_id{0};
