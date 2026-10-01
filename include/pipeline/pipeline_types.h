@@ -8,7 +8,7 @@
 #include <opencv2/core.hpp>
 
 #include "model/input_processor.h"
-#include "model/model_inference.h"
+#include "model/output_processor.h"
 #include "video/video_frame.h"
 
 namespace digital_human {
@@ -71,20 +71,19 @@ struct AudioFeatureTask {
 // InferenceFrameTask — inference coordinator 产出、render worker 消费的任务
 // ============================================================================
 
-/// @brief 推理帧任务：携带推理输出和人脸上下文，供 render worker 生成最终帧。
-/// @note  move-only，包含 move-only InferenceOutput。
+/// @brief 推理帧任务：携带已转换的模型输出和人脸上下文，供 render worker 生成最终帧。
 struct InferenceFrameTask {
     std::int64_t task_id = 0;                            ///< 全局唯一任务 ID
     std::int64_t frame_index = 0;                        ///< 视频帧序号
     std::int64_t pts_us = 0;                             ///< 微秒 PTS
     std::shared_ptr<const PreparedFaceContext> face_ctx; ///< 只读人脸上下文
-    model::InferenceOutput inference_output;             ///< move-only 推理输出
+    model::ProcessedModelOutput processed_output;        ///< 96×96 CV_8UC3 BGR 模型输出
     std::size_t attempt_count = 1;                       ///< 推理尝试次数
     std::uint64_t model_generation = 0;                  ///< 模型代次
 
     InferenceFrameTask() = default;
 
-    // move-only（因为 InferenceOutput 包含 ncnn::Mat，不可拷贝）
+    // 队列任务保持 move-only
     InferenceFrameTask(InferenceFrameTask&&) = default;
     InferenceFrameTask& operator=(InferenceFrameTask&&) = default;
     InferenceFrameTask(const InferenceFrameTask&) = delete;

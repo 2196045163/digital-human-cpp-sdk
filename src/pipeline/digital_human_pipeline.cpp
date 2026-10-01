@@ -455,6 +455,7 @@ void AudioWorkerLoop(detail::SharedState& shared) {
 void InferenceCoordinatorLoop(detail::SharedState& shared) {
     try {
         model::NcnnInputAdapter ncnn_adapter;
+        model::OutputProcessor output_processor;
 
         while (true) {
             // 检查取消或错误
@@ -545,13 +546,26 @@ void InferenceCoordinatorLoop(detail::SharedState& shared) {
                 break;
             }
 
+            // 将 ncnn 原始输出转换为后端无关的 96×96 CV_8UC3 BGR。
+            auto convert_result = output_processor.Convert(single_result.value);
+            if (!convert_result.success) {
+                shared.first_error.TryRecord(
+                    PipelineErrorCode::kOutputProcessFailed,
+                    "输出处理失败：" + convert_result.error_message,
+                    task.task_id, "inference_coordinator");
+                shared.internal_error.store(true, std::memory_order_release);
+                if (shared.q1) { shared.q1->Cancel(); }
+                if (shared.q2) { shared.q2->Cancel(); }
+                break;
+            }
+
             // 构建 InferenceFrameTask
             InferenceFrameTask frame_task;
             frame_task.task_id = task.task_id;
             frame_task.frame_index = task.frame_index;
             frame_task.pts_us = task.pts_us;
             frame_task.face_ctx = task.face_ctx;
-            frame_task.inference_output = std::move(single_result.value);
+            frame_task.processed_output = std::move(convert_result.value);
             frame_task.attempt_count = single_result.value.attempts.attempt_count;
             frame_task.model_generation = batch_result.model_generation;
 
@@ -584,10 +598,9 @@ void InferenceCoordinatorLoop(detail::SharedState& shared) {
     }
 }
 
-/// @brief Render Worker：消费 Q2 → OutputProcessor → FaceBlender → VideoFrame → sink
+/// @brief Render Worker：消费 Q2 → FaceBlender → VideoFrame → sink
 void RenderWorkerLoop(detail::SharedState& shared) {
     try {
-        model::OutputProcessor output_processor;
         core::FaceBlender face_blender;
 
         while (true) {
@@ -605,22 +618,10 @@ void RenderWorkerLoop(detail::SharedState& shared) {
 
             auto& task = *task_opt;
 
-            // 步骤 1：OutputProcessor — pred ncnn::Mat → CV_8UC3 96×96 BGR
-            auto convert_result = output_processor.Convert(task.inference_output);
-            if (!convert_result.success) {
-                shared.first_error.TryRecord(
-                    PipelineErrorCode::kOutputProcessFailed,
-                    "输出处理失败：" + convert_result.error_message,
-                    task.task_id, "render_worker");
-                shared.internal_error.store(true, std::memory_order_release);
-                if (shared.q2) { shared.q2->Cancel(); }
-                break;
-            }
-
-            // 步骤 2：FaceBlender — 96×96 BGR + mask → 原图尺寸 BGR
+            // 步骤 1：FaceBlender — 96×96 BGR + mask → 原图尺寸 BGR
             auto blend_result = face_blender.BlendMouthToOriginal(
                 task.face_ctx->source_bgr,
-                convert_result.value.generated_face_bgr,
+                task.processed_output.generated_face_bgr,
                 task.face_ctx->mask,
                 task.face_ctx->inverse_transform);
             if (!blend_result.success) {
@@ -633,20 +634,20 @@ void RenderWorkerLoop(detail::SharedState& shared) {
                 break;
             }
 
-            // 步骤 3：构建 VideoFrame
+            // 步骤 2：构建 VideoFrame
             video::VideoFrame video_frame;
             video_frame.frame_bgr = blend_result.final_bgr;
             video_frame.pts = core::MediaTimestamp{task.pts_us};
             video_frame.frame_index = task.frame_index;
 
-            // 步骤 4：构建 PipelineFrame
+            // 步骤 3：构建 PipelineFrame
             PipelineFrame pipeline_frame;
             pipeline_frame.video_frame = std::move(video_frame);
             pipeline_frame.delivery_kind = DeliveryKind::kUnique;
             pipeline_frame.source_task_id = task.task_id;
             pipeline_frame.schedule_action = PipelineScheduleAction::kDeliver;
 
-            // 步骤 5：离线模式直接从 render worker 调用 sink
+            // 步骤 4：离线模式直接从 render worker 调用 sink
             auto sink = shared.sink;
             if (sink) {
                 try {

@@ -90,8 +90,8 @@ struct PipelineConfig {
 ///
 /// 线程模型：
 /// 1. audio worker — 音频预处理、分帧、Mel、按视频帧率生成任务
-/// 2. inference coordinator — 消费 AudioFeatureTask → 调用 InferenceScheduler
-/// 3. render worker — OutputProcessor → FaceBlender → VideoFrame → sink
+/// 2. inference coordinator — 消费 AudioFeatureTask → InferenceScheduler → OutputProcessor
+/// 3. render worker — FaceBlender → VideoFrame → sink
 /// 4. InferenceScheduler worker — 执行实际 ncnn 推理
 /// 5. 实时输出调度线程 — 仅实时模式创建
 ///
