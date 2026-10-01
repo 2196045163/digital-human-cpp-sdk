@@ -202,7 +202,11 @@ struct PipelineStats {
     double total_wall_time_ms = 0.0;             ///< Start 到 sink OnTerminal 完成的总耗时
     double prepare_time_ms = 0.0;                ///< 同步准备耗时
     double audio_process_time_ms = 0.0;          ///< 音频处理总耗时
-    double inference_total_time_ms = 0.0;        ///< 所有 ncnn forward attempt 的累计耗时
+    double inference_total_time_ms = 0.0;        ///< 模型前向推理累计耗时（GPU 为同步 CUDA forward）
+    double h2d_time_ms = 0.0;                    ///< LibTorch CPU tensor→CUDA 累计耗时
+    double cuda_forward_time_ms = 0.0;           ///< LibTorch 同步 CUDA 前向累计耗时
+    double d2h_time_ms = 0.0;                    ///< LibTorch CUDA output→CPU 累计耗时
+    double gpu_backend_total_time_ms = 0.0;      ///< LibTorch backend 输入到 CPU output 可读取累计耗时
     double render_total_time_ms = 0.0;           ///< 渲染总耗时
 
     // 错误信息

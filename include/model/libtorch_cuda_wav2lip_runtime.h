@@ -35,12 +35,21 @@ struct LibTorchCudaInferenceInfo {
     bool output_was_cuda = false;
 };
 
+/// @brief 单次 LibTorch CUDA 推理的同步分段计时。
+struct LibTorchCudaInferenceTiming {
+    double h2d_time_ms = 0.0;              ///< CPU tensor 传输到 CUDA 的耗时
+    double cuda_forward_time_ms = 0.0;     ///< 已同步的 TorchScript CUDA 前向耗时
+    double d2h_time_ms = 0.0;              ///< CUDA output 传回 CPU 并 contiguous 的耗时
+    double gpu_backend_total_time_ms = 0.0;///< 输入进入 backend 到 CPU output 可读取的耗时
+};
+
 struct LibTorchCudaInferenceResult {
     bool success = false;
     LibTorchCudaStatus status = LibTorchCudaStatus::kForwardFailed;
     std::string error_message;
     ProcessedModelOutput output;
     LibTorchCudaInferenceInfo info;
+    LibTorchCudaInferenceTiming timing;
 };
 
 /// @brief 独立的 TorchScript CUDA Wav2Lip runtime。

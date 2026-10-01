@@ -115,6 +115,8 @@ bool LibTorchCudaWav2LipRuntime::IsReady() const {
 
 LibTorchCudaInferenceResult LibTorchCudaWav2LipRuntime::Infer(
     const Wav2LipInputData& input) const {
+    const auto backend_start = std::chrono::steady_clock::now();
+
     if (!IsReady()) {
         return MakeInferenceError(
             LibTorchCudaStatus::kModelNotReady,
@@ -153,10 +155,18 @@ LibTorchCudaInferenceResult LibTorchCudaWav2LipRuntime::Infer(
             {1, Spec::kFaceChannels, Spec::kFaceHeight, Spec::kFaceWidth},
             float_options).clone();
 
+        // CUDA 操作异步提交；分段计时前后同步，确保记录的是实际完成耗时。
+        torch::cuda::synchronize();
+        const auto h2d_start = std::chrono::steady_clock::now();
         torch::Tensor mel_cuda = mel_cpu.to(pImpl_->device, torch::kFloat32);
         torch::Tensor face_cuda = face_cpu.to(pImpl_->device, torch::kFloat32);
+        torch::cuda::synchronize();
+        const double h2d_time_ms = ElapsedMs(h2d_start);
 
+        const auto forward_start = std::chrono::steady_clock::now();
         torch::IValue forward_value = pImpl_->module->forward({mel_cuda, face_cuda});
+        torch::cuda::synchronize();
+        const double cuda_forward_time_ms = ElapsedMs(forward_start);
         if (!forward_value.isTensor()) {
             return MakeInferenceError(
                 LibTorchCudaStatus::kInvalidOutput,
@@ -168,6 +178,8 @@ LibTorchCudaInferenceResult LibTorchCudaWav2LipRuntime::Infer(
         LibTorchCudaInferenceResult result;
         result.info.output_shape = prediction.sizes().vec();
         result.info.output_was_cuda = prediction.is_cuda();
+        result.timing.h2d_time_ms = h2d_time_ms;
+        result.timing.cuda_forward_time_ms = cuda_forward_time_ms;
         result.output.metadata = input.metadata;
         result.output.model_generation = pImpl_->generation;
 
@@ -198,10 +210,16 @@ LibTorchCudaInferenceResult LibTorchCudaWav2LipRuntime::Infer(
             return result;
         }
 
-        const auto conversion_start = std::chrono::steady_clock::now();
+        torch::cuda::synchronize();
+        const auto d2h_start = std::chrono::steady_clock::now();
         torch::Tensor prediction_cpu = prediction.detach()
             .to(torch::Device(torch::kCPU), torch::kFloat32)
             .contiguous();
+        torch::cuda::synchronize();
+        result.timing.d2h_time_ms = ElapsedMs(d2h_start);
+        result.timing.gpu_backend_total_time_ms = ElapsedMs(backend_start);
+
+        const auto conversion_start = std::chrono::steady_clock::now();
         const float* prediction_data = prediction_cpu.data_ptr<float>();
 
         cv::Mat generated_face_bgr(Spec::kPredHeight, Spec::kPredWidth, CV_8UC3);

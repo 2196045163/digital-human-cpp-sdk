@@ -82,6 +82,12 @@ int main() {
     std::cout << "output_shape=" << FormatShape(inference_result.info.output_shape) << '\n';
     std::cout << "output_was_cuda="
               << (inference_result.info.output_was_cuda ? "true" : "false") << '\n';
+    std::cout << "h2d_time_ms=" << inference_result.timing.h2d_time_ms << '\n';
+    std::cout << "cuda_forward_time_ms="
+              << inference_result.timing.cuda_forward_time_ms << '\n';
+    std::cout << "d2h_time_ms=" << inference_result.timing.d2h_time_ms << '\n';
+    std::cout << "gpu_backend_total_time_ms="
+              << inference_result.timing.gpu_backend_total_time_ms << '\n';
     if (!inference_result.success) {
         std::cerr << "inference_error=" << inference_result.error_message << '\n';
         return 3;
@@ -90,7 +96,10 @@ int main() {
     const auto& image = inference_result.output.generated_face_bgr;
     if (inference_result.info.output_shape != std::vector<std::int64_t>{1, 3, 96, 96} ||
         !inference_result.info.output_was_cuda || image.rows != 96 || image.cols != 96 ||
-        image.type() != CV_8UC3) {
+        image.type() != CV_8UC3 || inference_result.timing.h2d_time_ms <= 0.0 ||
+        inference_result.timing.cuda_forward_time_ms <= 0.0 ||
+        inference_result.timing.d2h_time_ms <= 0.0 ||
+        inference_result.timing.gpu_backend_total_time_ms <= 0.0) {
         std::cerr << "output contract validation failed\n";
         return 4;
     }

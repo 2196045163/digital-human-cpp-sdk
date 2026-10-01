@@ -543,6 +543,18 @@ void InferenceCoordinatorLoop(detail::SharedState& shared) {
                     break;
                 }
 
+                {
+                    std::lock_guard<std::mutex> lk(shared.stats_mutex);
+                    shared.stats.inference_total_time_ms +=
+                        inference_result.timing.cuda_forward_time_ms;
+                    shared.stats.h2d_time_ms += inference_result.timing.h2d_time_ms;
+                    shared.stats.cuda_forward_time_ms +=
+                        inference_result.timing.cuda_forward_time_ms;
+                    shared.stats.d2h_time_ms += inference_result.timing.d2h_time_ms;
+                    shared.stats.gpu_backend_total_time_ms +=
+                        inference_result.timing.gpu_backend_total_time_ms;
+                }
+
                 InferenceFrameTask frame_task;
                 frame_task.task_id = task.task_id;
                 frame_task.frame_index = task.frame_index;
