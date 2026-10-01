@@ -207,6 +207,8 @@ struct PipelineStats {
     double cuda_forward_time_ms = 0.0;           ///< LibTorch 同步 CUDA 前向累计耗时
     double d2h_time_ms = 0.0;                    ///< LibTorch CUDA output→CPU 累计耗时
     double gpu_backend_total_time_ms = 0.0;      ///< LibTorch backend 输入到 CPU output 可读取累计耗时
+    double gpu_peak_memory_mb = 0.0;             ///< LibTorch allocator 单帧峰值的全任务最大值
+    double gpu_inference_memory_delta_mb = 0.0;  ///< NVML 单帧推理 used peak-baseline 的全任务最大值
     double render_total_time_ms = 0.0;           ///< 渲染总耗时
 
     // 错误信息

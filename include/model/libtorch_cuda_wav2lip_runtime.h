@@ -33,6 +33,8 @@ struct LibTorchCudaLoadResult {
 struct LibTorchCudaInferenceInfo {
     std::vector<std::int64_t> output_shape;
     bool output_was_cuda = false;
+    double gpu_peak_memory_mb = 0.0;
+    double gpu_inference_memory_delta_mb = 0.0;
 };
 
 /// @brief 单次 LibTorch CUDA 推理的同步分段计时。

@@ -4,9 +4,12 @@
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <stdexcept>
 #include <utility>
 
 #include <opencv2/imgproc.hpp>
+#include <c10/cuda/CUDACachingAllocator.h>
+#include <nvml.h>
 #include <torch/cuda.h>
 #include <torch/script.h>
 
@@ -42,6 +45,16 @@ double CalculateLaplacianVariance(const cv::Mat& generated_face_bgr) {
     return standard_deviation[0] * standard_deviation[0];
 }
 
+double ReadNvmlUsedMemoryMb(nvmlDevice_t device) {
+    nvmlMemory_t memory{};
+    const nvmlReturn_t status = nvmlDeviceGetMemoryInfo(device, &memory);
+    if (status != NVML_SUCCESS) {
+        throw std::runtime_error(
+            std::string("nvmlDeviceGetMemoryInfo failed: ") + nvmlErrorString(status));
+    }
+    return static_cast<double>(memory.used) / (1024.0 * 1024.0);
+}
+
 LibTorchCudaInferenceResult MakeInferenceError(
     LibTorchCudaStatus status,
     std::string error_message,
@@ -59,6 +72,14 @@ struct LibTorchCudaWav2LipRuntime::Impl {
     torch::Device device{torch::kCUDA, 0};
     std::unique_ptr<torch::jit::script::Module> module;
     std::uint64_t generation = 0;
+    nvmlDevice_t nvml_device = nullptr;
+    bool nvml_initialized = false;
+
+    ~Impl() {
+        if (nvml_initialized) {
+            nvmlShutdown();
+        }
+    }
 };
 
 LibTorchCudaWav2LipRuntime::LibTorchCudaWav2LipRuntime()
@@ -89,6 +110,30 @@ LibTorchCudaLoadResult LibTorchCudaWav2LipRuntime::Load(
         result.status = LibTorchCudaStatus::kModelFileNotFound;
         result.error_message = "TorchScript model file does not exist: " + model_path.string();
         return result;
+    }
+
+    if (!pImpl_->nvml_initialized) {
+        const nvmlReturn_t init_status = nvmlInit_v2();
+        if (init_status != NVML_SUCCESS) {
+            result.status = LibTorchCudaStatus::kModelLoadFailed;
+            result.error_message =
+                std::string("nvmlInit_v2 failed: ") + nvmlErrorString(init_status);
+            return result;
+        }
+        pImpl_->nvml_initialized = true;
+
+        const nvmlReturn_t device_status = nvmlDeviceGetHandleByIndex_v2(
+            static_cast<unsigned int>(pImpl_->device.index()),
+            &pImpl_->nvml_device);
+        if (device_status != NVML_SUCCESS) {
+            result.status = LibTorchCudaStatus::kModelLoadFailed;
+            result.error_message = std::string("nvmlDeviceGetHandleByIndex_v2 failed: ")
+                + nvmlErrorString(device_status);
+            nvmlShutdown();
+            pImpl_->nvml_initialized = false;
+            pImpl_->nvml_device = nullptr;
+            return result;
+        }
     }
 
     try {
@@ -141,6 +186,20 @@ LibTorchCudaInferenceResult LibTorchCudaWav2LipRuntime::Infer(
 
     try {
         torch::NoGradGuard no_grad;
+        const c10::DeviceIndex device_index = pImpl_->device.index();
+        c10::cuda::CUDACachingAllocator::resetPeakStats(device_index);
+        double nvml_used_memory_peak_mb = 0.0;
+        double nvml_query_time_ms = 0.0;
+        const auto sample_nvml_used_memory = [&]() {
+            const auto query_start = std::chrono::steady_clock::now();
+            const double used_mb = ReadNvmlUsedMemoryMb(pImpl_->nvml_device);
+            nvml_used_memory_peak_mb = std::max(
+                nvml_used_memory_peak_mb, used_mb);
+            nvml_query_time_ms += ElapsedMs(query_start);
+            return used_mb;
+        };
+        const double baseline_gpu_memory_used_mb = sample_nvml_used_memory();
+
         const auto float_options = torch::TensorOptions()
             .dtype(torch::kFloat32)
             .device(torch::kCPU);
@@ -162,11 +221,13 @@ LibTorchCudaInferenceResult LibTorchCudaWav2LipRuntime::Infer(
         torch::Tensor face_cuda = face_cpu.to(pImpl_->device, torch::kFloat32);
         torch::cuda::synchronize();
         const double h2d_time_ms = ElapsedMs(h2d_start);
+        sample_nvml_used_memory();
 
         const auto forward_start = std::chrono::steady_clock::now();
         torch::IValue forward_value = pImpl_->module->forward({mel_cuda, face_cuda});
         torch::cuda::synchronize();
         const double cuda_forward_time_ms = ElapsedMs(forward_start);
+        sample_nvml_used_memory();
         if (!forward_value.isTensor()) {
             return MakeInferenceError(
                 LibTorchCudaStatus::kInvalidOutput,
@@ -209,6 +270,7 @@ LibTorchCudaInferenceResult LibTorchCudaWav2LipRuntime::Infer(
             result.error_message = "TorchScript output exceeds the permitted [0,1] range";
             return result;
         }
+        sample_nvml_used_memory();
 
         torch::cuda::synchronize();
         const auto d2h_start = std::chrono::steady_clock::now();
@@ -217,7 +279,9 @@ LibTorchCudaInferenceResult LibTorchCudaWav2LipRuntime::Infer(
             .contiguous();
         torch::cuda::synchronize();
         result.timing.d2h_time_ms = ElapsedMs(d2h_start);
-        result.timing.gpu_backend_total_time_ms = ElapsedMs(backend_start);
+        result.timing.gpu_backend_total_time_ms = std::max(
+            0.0, ElapsedMs(backend_start) - nvml_query_time_ms);
+        sample_nvml_used_memory();
 
         const auto conversion_start = std::chrono::steady_clock::now();
         const float* prediction_data = prediction_cpu.data_ptr<float>();
@@ -255,6 +319,18 @@ LibTorchCudaInferenceResult LibTorchCudaWav2LipRuntime::Infer(
         result.output.conversion_info.sharpness_threshold_applied = false;
         result.output.conversion_info.sharpness_passed = true;
         result.output.conversion_info.conversion_ms = ElapsedMs(conversion_start);
+
+        constexpr std::size_t kAggregateStat = static_cast<std::size_t>(
+            c10::CachingAllocator::StatType::AGGREGATE);
+        const auto cuda_memory_stats =
+            c10::cuda::CUDACachingAllocator::getDeviceStats(device_index);
+        const auto peak_allocated_bytes =
+            cuda_memory_stats.allocated_bytes[kAggregateStat].peak;
+        result.info.gpu_peak_memory_mb =
+            static_cast<double>(peak_allocated_bytes) / (1024.0 * 1024.0);
+        result.info.gpu_inference_memory_delta_mb = std::max(
+            0.0, nvml_used_memory_peak_mb - baseline_gpu_memory_used_mb);
+
         result.success = true;
         result.status = LibTorchCudaStatus::kOk;
         return result;

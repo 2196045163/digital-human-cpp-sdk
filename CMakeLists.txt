@@ -35,7 +35,15 @@ message(STATUS ">> ncnn Found")
 
 if(ENABLE_LIBTORCH_CUDA_BACKEND)
     find_package(Torch REQUIRED)
+    find_path(NVML_INCLUDE_DIR nvml.h
+        HINTS "${CUDA_TOOLKIT_ROOT_DIR}/include" /usr/local/cuda/include)
+    find_library(NVML_LIBRARY NAMES nvidia-ml
+        HINTS /usr/lib/wsl/lib "${CUDA_TOOLKIT_ROOT_DIR}/lib64/stubs")
+    if(NOT NVML_INCLUDE_DIR OR NOT NVML_LIBRARY)
+        message(FATAL_ERROR "NVML headers/library are required for the LibTorch CUDA backend")
+    endif()
     message(STATUS ">> LibTorch CUDA backend enabled: Torch ${Torch_VERSION}")
+    message(STATUS ">> NVML Found: ${NVML_LIBRARY}")
 endif()
 
 # FFmpeg

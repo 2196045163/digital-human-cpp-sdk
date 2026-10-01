@@ -553,6 +553,12 @@ void InferenceCoordinatorLoop(detail::SharedState& shared) {
                     shared.stats.d2h_time_ms += inference_result.timing.d2h_time_ms;
                     shared.stats.gpu_backend_total_time_ms +=
                         inference_result.timing.gpu_backend_total_time_ms;
+                    shared.stats.gpu_peak_memory_mb = std::max(
+                        shared.stats.gpu_peak_memory_mb,
+                        inference_result.info.gpu_peak_memory_mb);
+                    shared.stats.gpu_inference_memory_delta_mb = std::max(
+                        shared.stats.gpu_inference_memory_delta_mb,
+                        inference_result.info.gpu_inference_memory_delta_mb);
                 }
 
                 InferenceFrameTask frame_task;

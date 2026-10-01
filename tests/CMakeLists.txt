@@ -213,6 +213,12 @@ set(CPU_BENCHMARK_LANDMARK_MODEL
 
 add_executable(cpu_benchmark performance/cpu_benchmark.cpp)
 target_link_libraries(cpu_benchmark PRIVATE digital_human_core)
+if(ENABLE_LIBTORCH_CUDA_BACKEND)
+    target_compile_definitions(cpu_benchmark PRIVATE
+        DIGITAL_HUMAN_BENCHMARK_NVML=1)
+    target_include_directories(cpu_benchmark PRIVATE ${NVML_INCLUDE_DIR})
+    target_link_libraries(cpu_benchmark PRIVATE ${NVML_LIBRARY})
+endif()
 target_compile_definitions(cpu_benchmark PRIVATE
     DIGITAL_HUMAN_BENCHMARK_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     DIGITAL_HUMAN_BENCHMARK_MODEL_PARAM="${CPU_BENCHMARK_MODEL_PARAM}"

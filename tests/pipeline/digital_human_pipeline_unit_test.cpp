@@ -278,6 +278,8 @@ TEST(DigitalHumanPipelineUnitTest, StatsInitialValues) {
     EXPECT_DOUBLE_EQ(stats.cuda_forward_time_ms, 0.0);
     EXPECT_DOUBLE_EQ(stats.d2h_time_ms, 0.0);
     EXPECT_DOUBLE_EQ(stats.gpu_backend_total_time_ms, 0.0);
+    EXPECT_DOUBLE_EQ(stats.gpu_peak_memory_mb, 0.0);
+    EXPECT_DOUBLE_EQ(stats.gpu_inference_memory_delta_mb, 0.0);
 }
 
 // ============================================================================

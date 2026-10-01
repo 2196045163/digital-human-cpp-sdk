@@ -88,6 +88,10 @@ int main() {
     std::cout << "d2h_time_ms=" << inference_result.timing.d2h_time_ms << '\n';
     std::cout << "gpu_backend_total_time_ms="
               << inference_result.timing.gpu_backend_total_time_ms << '\n';
+    std::cout << "torch_allocated_memory_peak_mb="
+              << inference_result.info.gpu_peak_memory_mb << '\n';
+    std::cout << "gpu_inference_memory_delta_mb="
+              << inference_result.info.gpu_inference_memory_delta_mb << '\n';
     if (!inference_result.success) {
         std::cerr << "inference_error=" << inference_result.error_message << '\n';
         return 3;
@@ -99,7 +103,9 @@ int main() {
         image.type() != CV_8UC3 || inference_result.timing.h2d_time_ms <= 0.0 ||
         inference_result.timing.cuda_forward_time_ms <= 0.0 ||
         inference_result.timing.d2h_time_ms <= 0.0 ||
-        inference_result.timing.gpu_backend_total_time_ms <= 0.0) {
+        inference_result.timing.gpu_backend_total_time_ms <= 0.0 ||
+        inference_result.info.gpu_peak_memory_mb <= 0.0 ||
+        inference_result.info.gpu_inference_memory_delta_mb <= 0.0) {
         std::cerr << "output contract validation failed\n";
         return 4;
     }
