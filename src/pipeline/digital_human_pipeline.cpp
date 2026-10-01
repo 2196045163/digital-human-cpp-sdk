@@ -130,6 +130,14 @@ PipelineState GetSharedState(detail::SharedState& shared) {
     return shared.state;
 }
 
+double ElapsedWallTimeMs(const detail::SharedState& shared) {
+    if (shared.wall_start_time == std::chrono::steady_clock::time_point{}) {
+        return 0.0;
+    }
+    return std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - shared.wall_start_time).count();
+}
+
 /// @brief 确定终止原因（第一个获胜）
 PipelineTermination DetermineTermination(const detail::SharedState& shared) {
     if (shared.internal_error.load(std::memory_order_acquire)) {
@@ -227,15 +235,15 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
         return result;
     }
 
-    // ---- 5. FaceAligner：原图坐标系 -> Wav2Lip 96x96 对齐坐标系 ----
-    core::FaceAligner face_aligner;
-    auto alignment = face_aligner.Align(
+    // ---- 5. Wav2Lip 官方风格：检测框 bottom padding=10 后直接裁剪并缩放 ----
+    model::Wav2LipInputBuilder input_builder;
+    auto face_prepare = input_builder.PrepareFace(
         source_bgr,
         best_landmark.face_rect,
         best_landmark.landmarks);
-    if (!alignment.success) {
+    if (!face_prepare.success) {
         result.error_code = PipelineErrorCode::kFacePrepareFailed;
-        result.error_message = "FaceAligner 失败：" + alignment.error_message;
+        result.error_message = "Wav2Lip 人脸裁剪失败：" + face_prepare.error_message;
         return result;
     }
 
@@ -243,7 +251,7 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
     core::FaceMaskGenerator mask_gen;
     auto mask_result = mask_gen.GenerateAlignedMouthMask(
         cv::Size(96, 96),
-        alignment.aligned_landmarks);
+        face_prepare.value.landmarks_96);
     if (!mask_result.success) {
         result.error_code = PipelineErrorCode::kMaskGenerateFailed;
         result.error_message = "Mask 生成失败：" + mask_result.error_message;
@@ -253,12 +261,12 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
     // ---- 7. 构建不可变人脸上下文 ----
     auto face_ctx = std::make_shared<PreparedFaceContext>();
     face_ctx->source_bgr = source_bgr;
-    face_ctx->prepared_face_bgr = alignment.aligned_face;
+    face_ctx->prepared_face_bgr = face_prepare.value.face_bgr;
     face_ctx->mask = mask_result.alpha_mask;
-    face_ctx->source_crop_rect = alignment.source_face_rect;
-    face_ctx->transform = alignment.transform;
-    face_ctx->inverse_transform = alignment.inverse_transform;
-    face_ctx->landmarks_96 = alignment.aligned_landmarks;
+    face_ctx->source_crop_rect = face_prepare.value.source_crop_rect;
+    face_ctx->transform = face_prepare.value.transform;
+    face_ctx->inverse_transform = face_prepare.value.inverse_transform;
+    face_ctx->landmarks_96 = face_prepare.value.landmarks_96;
     face_ctx->original_size = source_bgr.size();
     face_ctx->original_landmarks = best_landmark.landmarks;
     prepare_ctx->face_ctx = face_ctx;
@@ -273,7 +281,9 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
     }
 
     // ---- 9. 音频预处理 ----
-    audio::AudioPreprocessor preprocessor;
+    audio::AudioPreprocessOptions preprocess_options;
+    preprocess_options.enable_normalize = false;
+    audio::AudioPreprocessor preprocessor(preprocess_options);
     auto preprocess_result = preprocessor.Process(audio_result.audio.pcm);
     if (!preprocess_result.success) {
         result.error_code = PipelineErrorCode::kAudioProcessFailed;
@@ -499,10 +509,16 @@ void InferenceCoordinatorLoop(detail::SharedState& shared) {
             batch_inputs.push_back(std::move(adapt_result.input));
 
             auto batch_result = shared.scheduler->InferBatch(batch_inputs);
+            double model_forward_time_ms = 0.0;
+            for (const auto& inference_result : batch_result.results) {
+                model_forward_time_ms += inference_result.value.timing.first_attempt_ms;
+                model_forward_time_ms += inference_result.value.timing.retry_attempts_ms;
+            }
             {
                 std::lock_guard<std::mutex> lk(shared.stats_mutex);
                 shared.stats.scheduler_accepted_count += batch_result.summary.accepted_count;
                 shared.stats.scheduler_failed_count += batch_result.summary.failure_count;
+                shared.stats.inference_total_time_ms += model_forward_time_ms;
             }
 
             // 检查 batch 结果：任一失败 → Pipeline 失败
@@ -823,6 +839,7 @@ void DigitalHumanPipeline::CheckTerminalAndNotify() {
         std::lock_guard<std::mutex> stats_lock(shared.stats_mutex);
         shared.stats.state = final_state;
         shared.stats.termination = term;
+        shared.stats.total_wall_time_ms = ElapsedWallTimeMs(shared);
     }
     shared.cleanup_complete.store(true, std::memory_order_release);
     SetSharedState(shared, final_state);
@@ -868,6 +885,7 @@ PipelineResult DigitalHumanPipeline::Start(const PipelineConfig& config,
     pImpl_->shared_.config = config;
     pImpl_->shared_.sink = std::move(sink);
     pImpl_->shared_.stats = PipelineStats{};
+    pImpl_->shared_.wall_start_time = std::chrono::steady_clock::now();
 
     // 进入 Starting 状态
     SetSharedState(pImpl_->shared_, PipelineState::kStarting);
@@ -881,6 +899,7 @@ PipelineResult DigitalHumanPipeline::Start(const PipelineConfig& config,
         pImpl_->shared_.stats.termination = PipelineTermination::kInternalError;
         pImpl_->shared_.stats.first_error_code = prepare_result.error_code;
         pImpl_->shared_.stats.first_error_message = prepare_result.error_message;
+        pImpl_->shared_.stats.total_wall_time_ms = ElapsedWallTimeMs(pImpl_->shared_);
         pImpl_->shared_.cleanup_complete.store(true, std::memory_order_release);
 
         // 通知等待者
@@ -900,6 +919,7 @@ PipelineResult DigitalHumanPipeline::Start(const PipelineConfig& config,
         SetSharedState(pImpl_->shared_, PipelineState::kCancelled);
         pImpl_->shared_.stats.state = PipelineState::kCancelled;
         pImpl_->shared_.stats.termination = PipelineTermination::kUserCancel;
+        pImpl_->shared_.stats.total_wall_time_ms = ElapsedWallTimeMs(pImpl_->shared_);
         pImpl_->shared_.cleanup_complete.store(true, std::memory_order_release);
         {
             std::lock_guard<std::mutex> lock(pImpl_->wait_mutex_);
@@ -973,6 +993,7 @@ PipelineResult DigitalHumanPipeline::Start(const PipelineConfig& config,
         pImpl_->shared_.stats.termination = PipelineTermination::kInternalError;
         pImpl_->shared_.stats.first_error_code = PipelineErrorCode::kThreadCreateFailed;
         pImpl_->shared_.stats.first_error_message = "线程创建失败：" + std::string(e.what());
+        pImpl_->shared_.stats.total_wall_time_ms = ElapsedWallTimeMs(pImpl_->shared_);
         pImpl_->shared_.cleanup_complete.store(true, std::memory_order_release);
 
         {
@@ -1089,8 +1110,12 @@ PipelineResult DigitalHumanPipeline::Wait() {
                 }
             }
 
-            shared.stats.state = final_state;
-            shared.stats.termination = term;
+            {
+                std::lock_guard<std::mutex> stats_lock(shared.stats_mutex);
+                shared.stats.state = final_state;
+                shared.stats.termination = term;
+                shared.stats.total_wall_time_ms = ElapsedWallTimeMs(shared);
+            }
             shared.cleanup_complete.store(true, std::memory_order_release);
             SetSharedState(shared, final_state);
         }
@@ -1204,7 +1229,6 @@ PipelineResult DigitalHumanPipeline::RequestStop() {
 
 PipelineResult DigitalHumanPipeline::Stop() {
     if (!pImpl_) { return PipelineResult{}; }
-    auto stop_start = std::chrono::steady_clock::now();
 
     RequestStop();
 
@@ -1222,9 +1246,10 @@ PipelineResult DigitalHumanPipeline::Stop() {
 
     pImpl_->shared_.cleanup_complete.store(true, std::memory_order_release);
 
-    auto stop_end = std::chrono::steady_clock::now();
-    pImpl_->shared_.stats.total_wall_time_ms = std::chrono::duration<double, std::milli>(
-        stop_end - stop_start).count();
+    {
+        std::lock_guard<std::mutex> stats_lock(pImpl_->shared_.stats_mutex);
+        pImpl_->shared_.stats.total_wall_time_ms = ElapsedWallTimeMs(pImpl_->shared_);
+    }
 
     PipelineResult result;
     {

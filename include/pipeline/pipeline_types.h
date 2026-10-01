@@ -200,10 +200,10 @@ struct PipelineStats {
     std::size_t scheduler_pending_at_terminal = 0;///< 终止时 scheduler 待处理任务数
 
     // 时间统计
-    double total_wall_time_ms = 0.0;             ///< 总耗时（从 Start 到终态）
+    double total_wall_time_ms = 0.0;             ///< Start 到 sink OnTerminal 完成的总耗时
     double prepare_time_ms = 0.0;                ///< 同步准备耗时
     double audio_process_time_ms = 0.0;          ///< 音频处理总耗时
-    double inference_total_time_ms = 0.0;        ///< 推理总耗时
+    double inference_total_time_ms = 0.0;        ///< 所有 ncnn forward attempt 的累计耗时
     double render_total_time_ms = 0.0;           ///< 渲染总耗时
 
     // 错误信息

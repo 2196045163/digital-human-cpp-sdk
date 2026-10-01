@@ -49,3 +49,6 @@ logs/
 # 输入输出文件
 inputs/
 outputs/
+
+# 不知名文件
+cmake_test*
