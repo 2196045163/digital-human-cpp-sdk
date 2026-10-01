@@ -59,7 +59,7 @@ namespace {
 
 constexpr int kDefaultOutputFps = 25;
 constexpr int kOutputFpsDen = 1;
-constexpr int kNcnnThreads = 1;
+constexpr int kDefaultNcnnThreads = 1;
 constexpr std::size_t kErrorCapacity = 1024;
 
 struct BenchmarkPaths {
@@ -217,7 +217,8 @@ bool ValidatePaths(const BenchmarkPaths& paths, std::string& error) {
     return true;
 }
 
-void PrintEnvironment(const BenchmarkPaths& paths, int run_count, int output_fps) {
+void PrintEnvironment(const BenchmarkPaths& paths, int run_count, int output_fps,
+                      int ncnn_threads) {
     bool is_wsl = false;
     const std::string kernel = KernelDescription(is_wsl);
     const std::string build_type = Trim(DIGITAL_HUMAN_BENCHMARK_BUILD_TYPE);
@@ -237,7 +238,7 @@ void PrintEnvironment(const BenchmarkPaths& paths, int run_count, int output_fps
               << "  cmake_build_type: "
               << (build_type.empty() ? "not set" : build_type) << '\n'
               << "  inference_backend: ncnn CPU\n"
-              << "  ncnn_threads: " << kNcnnThreads << '\n'
+              << "  ncnn_threads: " << ncnn_threads << '\n'
               << "  ffmpeg_version: " << av_version_info() << '\n'
               << "  image_path: " << paths.image.string() << '\n'
               << "  audio_path: " << paths.audio.string() << '\n'
@@ -269,7 +270,8 @@ bool ReadPeakRssMb(double& peak_rss_mb, std::string& error) {
     return true;
 }
 
-RunMetrics RunOnce(int run_index, int output_fps, const BenchmarkPaths& paths) {
+RunMetrics RunOnce(int run_index, int output_fps, int ncnn_threads,
+                   const BenchmarkPaths& paths) {
     using digital_human::audio::AudioLoader;
     using digital_human::output::FinalMediaWriter;
     using digital_human::output::WriterConfig;
@@ -326,7 +328,7 @@ RunMetrics RunOnce(int run_index, int output_fps, const BenchmarkPaths& paths) {
     pipeline_config.fps_num = output_fps;
     pipeline_config.fps_den = kOutputFpsDen;
     pipeline_config.scheduler_worker_count = 1;
-    pipeline_config.ncnn_threads = kNcnnThreads;
+    pipeline_config.ncnn_threads = ncnn_threads;
 
     DigitalHumanPipeline pipeline;
     auto pipeline_result = pipeline.Start(pipeline_config, writer);
@@ -455,7 +457,8 @@ bool ReadAll(int file_descriptor, void* data, std::size_t size) {
 }
 
 RunMetrics RunInIndependentProcess(
-    int run_index, int output_fps, const BenchmarkPaths& paths) {
+    int run_index, int output_fps, int ncnn_threads,
+    const BenchmarkPaths& paths) {
     RunMetrics failure;
     failure.run_index = run_index;
 
@@ -475,7 +478,8 @@ RunMetrics RunInIndependentProcess(
 
     if (child_pid == 0) {
         close(pipe_descriptors[0]);
-        const RunMetrics metrics = RunOnce(run_index, output_fps, paths);
+        const RunMetrics metrics = RunOnce(
+            run_index, output_fps, ncnn_threads, paths);
         const RunWireResult wire = ToWireResult(metrics);
         const bool sent = WriteAll(pipe_descriptors[1], &wire, sizeof(wire));
         close(pipe_descriptors[1]);
@@ -562,7 +566,8 @@ void PrintSummaryMetric(const char* name, const MetricSummary& summary) {
 }
 
 void PrintUsage(const char* program) {
-    std::cout << "Usage: " << program << " [--runs N] [--fps N]\n";
+    std::cout << "Usage: " << program
+              << " [--runs N] [--fps N] [--threads N]\n";
 }
 
 }  // namespace
@@ -570,6 +575,7 @@ void PrintUsage(const char* program) {
 int main(int argc, char* argv[]) {
     int run_count = 5;
     int output_fps = kDefaultOutputFps;
+    int ncnn_threads = kDefaultNcnnThreads;
     for (int i = 1; i < argc; ++i) {
         const std::string arg(argv[i]);
         if (arg == "--runs") {
@@ -580,6 +586,11 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--fps") {
             if (i + 1 >= argc || !ParsePositiveInt(argv[++i], output_fps)) {
                 std::cerr << "--fps requires a positive integer\n";
+                return 2;
+            }
+        } else if (arg == "--threads") {
+            if (i + 1 >= argc || !ParsePositiveInt(argv[++i], ncnn_threads)) {
+                std::cerr << "--threads requires a positive integer\n";
                 return 2;
             }
         } else if (arg == "--help" || arg == "-h") {
@@ -594,7 +605,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << std::fixed << std::setprecision(3);
     const BenchmarkPaths paths = DefaultPaths();
-    PrintEnvironment(paths, run_count, output_fps);
+    PrintEnvironment(paths, run_count, output_fps, ncnn_threads);
 
     std::string path_error;
     if (!ValidatePaths(paths, path_error)) {
@@ -607,7 +618,8 @@ int main(int argc, char* argv[]) {
 
     bool all_success = true;
     for (int run_index = 1; run_index <= run_count; ++run_index) {
-        runs.push_back(RunInIndependentProcess(run_index, output_fps, paths));
+        runs.push_back(RunInIndependentProcess(
+            run_index, output_fps, ncnn_threads, paths));
         PrintRun(runs.back(), run_count);
         all_success = all_success && runs.back().success;
     }
