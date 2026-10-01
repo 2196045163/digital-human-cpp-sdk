@@ -10,6 +10,11 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/output/*.cpp
 )
 
+# The LibTorch backend is optional so the existing CPU-only build has no Torch dependency.
+if(NOT ENABLE_LIBTORCH_CUDA_BACKEND)
+    list(FILTER SRC_FILES EXCLUDE REGEX ".*/libtorch_cuda_wav2lip_runtime\\.cpp$")
+endif()
+
 # 若尚无源文件，编译一个占位文件避免 CMake 报错
 if(NOT SRC_FILES)
     set(SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/core/placeholder.cpp)
@@ -46,5 +51,9 @@ target_link_libraries(digital_human_core PRIVATE Threads::Threads)
 
 # OpenMP
 target_link_libraries(digital_human_core PRIVATE OpenMP::OpenMP_CXX)
+
+if(ENABLE_LIBTORCH_CUDA_BACKEND)
+    target_link_libraries(digital_human_core PRIVATE ${TORCH_LIBRARIES})
+endif()
 
 message("OpenCV libraries: ${OpenCV_LIBS}")

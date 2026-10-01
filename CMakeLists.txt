@@ -15,6 +15,7 @@ option(USE_MARCH_NATIVE "Compile with -march=native for host-specific instructio
 option(BUILD_TESTS       "Build unit and integration tests (requires GTest)" ON)
 option(ENABLE_ASAN       "Enable AddressSanitizer (mutually exclusive with TSAN)" OFF)
 option(ENABLE_TSAN       "Enable ThreadSanitizer (mutually exclusive with ASAN)" OFF)
+option(ENABLE_LIBTORCH_CUDA_BACKEND "Build the optional LibTorch CUDA Wav2Lip backend" OFF)
 
 if(USE_MARCH_NATIVE)
     add_compile_options(-march=native)
@@ -31,6 +32,11 @@ find_package(OpenMP REQUIRED)
 #   cmake .. -DCMAKE_PREFIX_PATH=/path/to/ncnn/install
 find_package(ncnn CONFIG REQUIRED)
 message(STATUS ">> ncnn Found")
+
+if(ENABLE_LIBTORCH_CUDA_BACKEND)
+    find_package(Torch REQUIRED)
+    message(STATUS ">> LibTorch CUDA backend enabled: Torch ${Torch_VERSION}")
+endif()
 
 # FFmpeg
 find_package(PkgConfig REQUIRED)
