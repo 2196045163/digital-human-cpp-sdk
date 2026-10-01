@@ -25,6 +25,9 @@
 #include "model/model_loader.h"
 #include "model/ncnn_input_adapter.h"
 #include "model/output_processor.h"
+#ifdef DIGITAL_HUMAN_ENABLE_LIBTORCH_CUDA_BACKEND
+#include "model/libtorch_cuda_wav2lip_runtime.h"
+#endif
 #include "pipeline/pipeline_output_sink.h"
 #include "pipeline/pipeline_types.h"
 #include "video/video_frame.h"
@@ -111,6 +114,9 @@ struct SharedState {
 
     // ---- 推理调度器 ----
     std::shared_ptr<model::InferenceScheduler> scheduler;
+#ifdef DIGITAL_HUMAN_ENABLE_LIBTORCH_CUDA_BACKEND
+    std::shared_ptr<model::LibTorchCudaWav2LipRuntime> libtorch_cuda_runtime;
+#endif
 
     // ---- 阶段队列 ----
     std::unique_ptr<BoundedTaskQueue<AudioFeatureTask>> q1;

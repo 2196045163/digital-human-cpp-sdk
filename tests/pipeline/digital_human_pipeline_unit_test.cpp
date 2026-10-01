@@ -244,6 +244,8 @@ TEST(DigitalHumanPipelineUnitTest, ConfigDefaults) {
     EXPECT_EQ(config.inference_microbatch, 1);
     EXPECT_EQ(config.scheduler_worker_count, 1);
     EXPECT_EQ(config.ncnn_threads, 1);
+    EXPECT_EQ(config.inference_backend, InferenceBackend::kNcnnCpu);
+    EXPECT_TRUE(config.torchscript_model_path.empty());
     EXPECT_EQ(config.tail_policy, MelTailPolicy::kClampOrReplicateLast);
     EXPECT_EQ(config.fps_num, 25);
     EXPECT_EQ(config.fps_den, 1);

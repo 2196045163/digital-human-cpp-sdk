@@ -28,6 +28,12 @@ enum class PipelineMode {
     kRealtime   ///< 实时模式：使用 FrameScheduler + AudioVideoSynchronous
 };
 
+/// @brief Pipeline 使用的 Wav2Lip 推理后端。
+enum class InferenceBackend {
+    kNcnnCpu,
+    kLibTorchCuda
+};
+
 /// @brief Pipeline 全部可配置项，所有字段都有默认值
 struct PipelineConfig {
     // ---- 输入路径 ----
@@ -37,6 +43,7 @@ struct PipelineConfig {
     // ---- 模型路径 ----
     std::filesystem::path model_param_path;         ///< wav2lip.param 路径
     std::filesystem::path model_bin_path;            ///< 推导出；留空则自动推导
+    std::filesystem::path torchscript_model_path;    ///< LibTorch CUDA 使用的 TorchScript 模型路径
     std::filesystem::path landmark_model_path;       ///< dlib 68 点模型路径
 
     // ---- 视频参数 ----
@@ -51,6 +58,7 @@ struct PipelineConfig {
     std::size_t q2_capacity = 2;                     ///< inference→render 队列容量
 
     // ---- 推理配置 ----
+    InferenceBackend inference_backend = InferenceBackend::kNcnnCpu; ///< 默认保持 ncnn CPU
     std::size_t inference_microbatch = 1;            ///< 推理微批次大小
     std::size_t scheduler_worker_count = 1;           ///< scheduler worker 数
     int ncnn_threads = 1;                            ///< 每 worker 的 ncnn 线程数

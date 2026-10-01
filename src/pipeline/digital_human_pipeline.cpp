@@ -170,9 +170,21 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
 
     // ---- 1. 配置基础校验 ----
     if (config.image_path.empty() || config.audio_path.empty()
-        || config.model_param_path.empty() || config.landmark_model_path.empty()) {
+        || config.landmark_model_path.empty()) {
         result.error_code = PipelineErrorCode::kInvalidConfig;
-        result.error_message = "配置无效：图片路径、音频路径、模型路径、关键点模型路径均不能为空";
+        result.error_message = "配置无效：图片路径、音频路径、关键点模型路径均不能为空";
+        return result;
+    }
+    if (config.inference_backend == InferenceBackend::kNcnnCpu
+        && config.model_param_path.empty()) {
+        result.error_code = PipelineErrorCode::kInvalidConfig;
+        result.error_message = "配置无效：ncnn CPU 后端的 model_param_path 不能为空";
+        return result;
+    }
+    if (config.inference_backend == InferenceBackend::kLibTorchCuda
+        && config.torchscript_model_path.empty()) {
+        result.error_code = PipelineErrorCode::kInvalidConfig;
+        result.error_message = "配置无效：LibTorch CUDA 后端的 torchscript_model_path 不能为空";
         return result;
     }
     if (config.fps_num <= 0 || config.fps_den <= 0) {
@@ -182,16 +194,38 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
     }
 
     // ---- 2. 模型加载 ----
-    model::ModelLoader model_loader;
-    model::ModelLoadOptions load_opts;
-    load_opts.num_threads = config.ncnn_threads;
-    auto load_result = model_loader.Load(config.model_param_path, load_opts);
-    if (!load_result.success) {
+    if (config.inference_backend == InferenceBackend::kNcnnCpu) {
+        model::ModelLoader model_loader;
+        model::ModelLoadOptions load_opts;
+        load_opts.num_threads = config.ncnn_threads;
+        auto load_result = model_loader.Load(config.model_param_path, load_opts);
+        if (!load_result.success) {
+            result.error_code = PipelineErrorCode::kInvalidConfig;
+            result.error_message = "模型加载失败：" + load_result.error_message;
+            return result;
+        }
+        prepare_ctx->model_snapshot = model_loader.AcquireSnapshot();
+    } else if (config.inference_backend == InferenceBackend::kLibTorchCuda) {
+#ifdef DIGITAL_HUMAN_ENABLE_LIBTORCH_CUDA_BACKEND
+        auto runtime = std::make_shared<model::LibTorchCudaWav2LipRuntime>();
+        auto load_result = runtime->Load(config.torchscript_model_path);
+        if (!load_result.success) {
+            result.error_code = PipelineErrorCode::kInvalidConfig;
+            result.error_message = "LibTorch CUDA 模型加载失败：" + load_result.error_message;
+            return result;
+        }
+        shared.libtorch_cuda_runtime = std::move(runtime);
+#else
         result.error_code = PipelineErrorCode::kInvalidConfig;
-        result.error_message = "模型加载失败：" + load_result.error_message;
+        result.error_message =
+            "LibTorch CUDA 后端未启用：请使用 ENABLE_LIBTORCH_CUDA_BACKEND=ON 构建";
+        return result;
+#endif
+    } else {
+        result.error_code = PipelineErrorCode::kInvalidConfig;
+        result.error_message = "配置无效：未知推理后端";
         return result;
     }
-    prepare_ctx->model_snapshot = model_loader.AcquireSnapshot();
 
     // ---- 3. 图片加载 ----
     core::ImageLoader image_loader;
@@ -330,22 +364,24 @@ PipelineResult DoPrepare(detail::SharedState& shared, const PipelineConfig& conf
 
     shared.frame_count = frame_count;
 
-    // ---- 12. 创建 InferenceScheduler ----
-    model::SchedulerConfig sched_config;
-    sched_config.worker_count = config.scheduler_worker_count;
-    sched_config.queue_capacity = config.scheduler_worker_count * 2;
-    sched_config.queue_wait_timeout = config.inference_timeout;
-    sched_config.inference_options.light_mode = true;
-    sched_config.allow_thread_oversubscription = false;
+    // ---- 12. ncnn CPU 后端创建 InferenceScheduler ----
+    if (config.inference_backend == InferenceBackend::kNcnnCpu) {
+        model::SchedulerConfig sched_config;
+        sched_config.worker_count = config.scheduler_worker_count;
+        sched_config.queue_capacity = config.scheduler_worker_count * 2;
+        sched_config.queue_wait_timeout = config.inference_timeout;
+        sched_config.inference_options.light_mode = true;
+        sched_config.allow_thread_oversubscription = false;
 
-    auto scheduler = std::make_shared<model::InferenceScheduler>();
-    auto sched_start = scheduler->Start(prepare_ctx->model_snapshot, sched_config);
-    if (!sched_start.success) {
-        result.error_code = PipelineErrorCode::kInternalError;
-        result.error_message = "InferenceScheduler 启动失败：" + sched_start.error_message;
-        return result;
+        auto scheduler = std::make_shared<model::InferenceScheduler>();
+        auto sched_start = scheduler->Start(prepare_ctx->model_snapshot, sched_config);
+        if (!sched_start.success) {
+            result.error_code = PipelineErrorCode::kInternalError;
+            result.error_message = "InferenceScheduler 启动失败：" + sched_start.error_message;
+            return result;
+        }
+        shared.scheduler = scheduler;
     }
-    shared.scheduler = scheduler;
     shared.prepare_ctx = prepare_ctx;
 
     auto prepare_end = std::chrono::steady_clock::now();
@@ -490,6 +526,46 @@ void InferenceCoordinatorLoop(detail::SharedState& shared) {
                 if (shared.q1) { shared.q1->Cancel(); }
                 if (shared.q2) { shared.q2->Cancel(); }
                 break;
+            }
+
+            if (shared.config.inference_backend == InferenceBackend::kLibTorchCuda) {
+#ifdef DIGITAL_HUMAN_ENABLE_LIBTORCH_CUDA_BACKEND
+                auto inference_result =
+                    shared.libtorch_cuda_runtime->Infer(build_result.data);
+                if (!inference_result.success) {
+                    shared.first_error.TryRecord(
+                        PipelineErrorCode::kInferenceFailed,
+                        "LibTorch CUDA 推理失败：" + inference_result.error_message,
+                        task.task_id, "inference_coordinator");
+                    shared.internal_error.store(true, std::memory_order_release);
+                    if (shared.q1) { shared.q1->Cancel(); }
+                    if (shared.q2) { shared.q2->Cancel(); }
+                    break;
+                }
+
+                InferenceFrameTask frame_task;
+                frame_task.task_id = task.task_id;
+                frame_task.frame_index = task.frame_index;
+                frame_task.pts_us = task.pts_us;
+                frame_task.face_ctx = task.face_ctx;
+                frame_task.processed_output = std::move(inference_result.output);
+                frame_task.attempt_count = 1;
+                frame_task.model_generation = frame_task.processed_output.model_generation;
+
+                if (!shared.q2->Push(std::move(frame_task))) {
+                    break;
+                }
+                continue;
+#else
+                shared.first_error.TryRecord(
+                    PipelineErrorCode::kInferenceFailed,
+                    "LibTorch CUDA 后端未启用",
+                    task.task_id, "inference_coordinator");
+                shared.internal_error.store(true, std::memory_order_release);
+                if (shared.q1) { shared.q1->Cancel(); }
+                if (shared.q2) { shared.q2->Cancel(); }
+                break;
+#endif
             }
 
             // 适配为 ncnn 格式
