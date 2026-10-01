@@ -244,6 +244,8 @@ TEST(DigitalHumanPipelineUnitTest, ConfigDefaults) {
     EXPECT_EQ(config.inference_microbatch, 1);
     EXPECT_EQ(config.scheduler_worker_count, 1);
     EXPECT_EQ(config.ncnn_threads, 1);
+    EXPECT_EQ(config.inference_backend, InferenceBackend::kNcnnCpu);
+    EXPECT_TRUE(config.torchscript_model_path.empty());
     EXPECT_EQ(config.tail_policy, MelTailPolicy::kClampOrReplicateLast);
     EXPECT_EQ(config.fps_num, 25);
     EXPECT_EQ(config.fps_den, 1);
@@ -271,6 +273,13 @@ TEST(DigitalHumanPipelineUnitTest, StatsInitialValues) {
     EXPECT_EQ(stats.sink_callback_count, 0);
     EXPECT_EQ(stats.q1_high_watermark, 0);
     EXPECT_EQ(stats.q2_high_watermark, 0);
+    EXPECT_DOUBLE_EQ(stats.inference_total_time_ms, 0.0);
+    EXPECT_DOUBLE_EQ(stats.h2d_time_ms, 0.0);
+    EXPECT_DOUBLE_EQ(stats.cuda_forward_time_ms, 0.0);
+    EXPECT_DOUBLE_EQ(stats.d2h_time_ms, 0.0);
+    EXPECT_DOUBLE_EQ(stats.gpu_backend_total_time_ms, 0.0);
+    EXPECT_DOUBLE_EQ(stats.gpu_peak_memory_mb, 0.0);
+    EXPECT_DOUBLE_EQ(stats.gpu_inference_memory_delta_mb, 0.0);
 }
 
 // ============================================================================

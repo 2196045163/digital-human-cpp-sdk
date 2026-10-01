@@ -8,7 +8,7 @@
 #include <opencv2/core.hpp>
 
 #include "model/input_processor.h"
-#include "model/model_inference.h"
+#include "model/output_processor.h"
 #include "video/video_frame.h"
 
 namespace digital_human {
@@ -71,20 +71,19 @@ struct AudioFeatureTask {
 // InferenceFrameTask — inference coordinator 产出、render worker 消费的任务
 // ============================================================================
 
-/// @brief 推理帧任务：携带推理输出和人脸上下文，供 render worker 生成最终帧。
-/// @note  move-only，包含 move-only InferenceOutput。
+/// @brief 推理帧任务：携带已转换的模型输出和人脸上下文，供 render worker 生成最终帧。
 struct InferenceFrameTask {
     std::int64_t task_id = 0;                            ///< 全局唯一任务 ID
     std::int64_t frame_index = 0;                        ///< 视频帧序号
     std::int64_t pts_us = 0;                             ///< 微秒 PTS
     std::shared_ptr<const PreparedFaceContext> face_ctx; ///< 只读人脸上下文
-    model::InferenceOutput inference_output;             ///< move-only 推理输出
+    model::ProcessedModelOutput processed_output;        ///< 96×96 CV_8UC3 BGR 模型输出
     std::size_t attempt_count = 1;                       ///< 推理尝试次数
     std::uint64_t model_generation = 0;                  ///< 模型代次
 
     InferenceFrameTask() = default;
 
-    // move-only（因为 InferenceOutput 包含 ncnn::Mat，不可拷贝）
+    // 队列任务保持 move-only
     InferenceFrameTask(InferenceFrameTask&&) = default;
     InferenceFrameTask& operator=(InferenceFrameTask&&) = default;
     InferenceFrameTask(const InferenceFrameTask&) = delete;
@@ -203,7 +202,13 @@ struct PipelineStats {
     double total_wall_time_ms = 0.0;             ///< Start 到 sink OnTerminal 完成的总耗时
     double prepare_time_ms = 0.0;                ///< 同步准备耗时
     double audio_process_time_ms = 0.0;          ///< 音频处理总耗时
-    double inference_total_time_ms = 0.0;        ///< 所有 ncnn forward attempt 的累计耗时
+    double inference_total_time_ms = 0.0;        ///< 模型前向推理累计耗时（GPU 为同步 CUDA forward）
+    double h2d_time_ms = 0.0;                    ///< LibTorch CPU tensor→CUDA 累计耗时
+    double cuda_forward_time_ms = 0.0;           ///< LibTorch 同步 CUDA 前向累计耗时
+    double d2h_time_ms = 0.0;                    ///< LibTorch CUDA output→CPU 累计耗时
+    double gpu_backend_total_time_ms = 0.0;      ///< LibTorch backend 输入到 CPU output 可读取累计耗时
+    double gpu_peak_memory_mb = 0.0;             ///< LibTorch allocator 单帧峰值的全任务最大值
+    double gpu_inference_memory_delta_mb = 0.0;  ///< NVML 单帧推理 used peak-baseline 的全任务最大值
     double render_total_time_ms = 0.0;           ///< 渲染总耗时
 
     // 错误信息

@@ -98,6 +98,21 @@ target_link_libraries(output_processor_unit_test PRIVATE digital_human_core GTes
 target_include_directories(output_processor_unit_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 gtest_discover_tests(output_processor_unit_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+if(ENABLE_LIBTORCH_CUDA_BACKEND)
+    set(LIBTORCH_WAV2LIP_MODEL
+        "/mnt/d/VM_Shared/Project/digital_human/models/wav2lip-checkpoint/Wav2Lip-SD-NOGAN.pt"
+        CACHE FILEPATH "TorchScript Wav2Lip model used by the LibTorch CUDA smoke test")
+
+    add_executable(libtorch_cuda_wav2lip_smoke_test
+        model/libtorch_cuda_wav2lip_smoke_test.cpp)
+    target_link_libraries(libtorch_cuda_wav2lip_smoke_test PRIVATE digital_human_core)
+    target_compile_definitions(libtorch_cuda_wav2lip_smoke_test PRIVATE
+        DIGITAL_HUMAN_LIBTORCH_WAV2LIP_MODEL="${LIBTORCH_WAV2LIP_MODEL}")
+    add_test(NAME libtorch_cuda_wav2lip_smoke_test
+        COMMAND libtorch_cuda_wav2lip_smoke_test)
+    set_tests_properties(libtorch_cuda_wav2lip_smoke_test PROPERTIES TIMEOUT 300)
+endif()
+
 # ============================================================================
 # Pipeline 测试
 # ============================================================================
@@ -198,6 +213,12 @@ set(CPU_BENCHMARK_LANDMARK_MODEL
 
 add_executable(cpu_benchmark performance/cpu_benchmark.cpp)
 target_link_libraries(cpu_benchmark PRIVATE digital_human_core)
+if(ENABLE_LIBTORCH_CUDA_BACKEND)
+    target_compile_definitions(cpu_benchmark PRIVATE
+        DIGITAL_HUMAN_BENCHMARK_NVML=1)
+    target_include_directories(cpu_benchmark PRIVATE ${NVML_INCLUDE_DIR})
+    target_link_libraries(cpu_benchmark PRIVATE ${NVML_LIBRARY})
+endif()
 target_compile_definitions(cpu_benchmark PRIVATE
     DIGITAL_HUMAN_BENCHMARK_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     DIGITAL_HUMAN_BENCHMARK_MODEL_PARAM="${CPU_BENCHMARK_MODEL_PARAM}"
